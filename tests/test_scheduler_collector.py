@@ -1,6 +1,7 @@
 """Tests for scheduler/collector.py"""
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
 from html import unescape
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import scheduler.collector as collector
@@ -24,6 +26,7 @@ from api.models import (
 )
 from api.services.aggregator import build_query_key
 from api.services.history_service import QuerySyncResult, TrendReversal, as_utc
+from api.services.kufar_client import KufarAPIError
 from scheduler.collector import (
     _DLQ_MAX_RETRIES,
     _build_new_listing_message,
@@ -2762,6 +2765,171 @@ async def test_check_trackers_queries_kufar_once_per_search_key(
     assert calls[0]["query"] == "iPhone 13"
     assert await _event_keys(sf) == {(a_id, 7, "new_listing"), (b_id, 7, "new_listing")}
     assert sorted(_sent_chats(mock_bot)) == [1201, 1202]
+
+
+@pytest.mark.asyncio
+async def test_tracker_tick_pages_all_subscribers_and_reuses_the_page(
+    monkeypatch, mock_bot, tick_db,
+):
+    monkeypatch.setattr(collector, "_DUE_TRACKER_LIMIT", 2)
+    calls = []
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(lambda q: [_ad(7, 100_000)], calls))
+    checked = datetime.now(UTC) - timedelta(minutes=20)
+    async with tick_db() as session:
+        users = [make_user(telegram_user_id=80_000 + i, first_name="Subscriber") for i in range(7)]
+        session.add_all(users)
+        await session.flush()
+        trackers = [Tracker(
+            user_id=user.id, query="iphone 13", last_checked_at=None if i < 3 else checked,
+        ) for i, user in enumerate(users)]
+        session.add_all(trackers)
+        await session.commit()
+        returning_ids = {t.id for t in trackers[3:]}
+
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+
+    assert len(calls) == 1
+    assert await _event_keys(tick_db) == {(i, 7, "new_listing") for i in returning_ids}
+    assert sorted(_sent_chats(mock_bot)) == list(range(80_003, 80_007))
+    async with tick_db() as session:
+        rows = list((await session.scalars(select(Tracker))).all())
+        assert all(as_utc(t.last_checked_at) > checked for t in rows)
+
+
+@pytest.mark.asyncio
+async def test_tracker_tick_failed_first_page_does_not_repeat_or_starve_later_pages(
+    monkeypatch, mock_bot, tick_db,
+):
+    monkeypatch.setattr(collector, "_DUE_TRACKER_LIMIT", 2)
+    calls = []
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(
+        lambda q: KufarAPIError("bad query") if q == "bad" else [_ad(7, 100_000)], calls,
+    ))
+    async with tick_db() as session:
+        users = [make_user(telegram_user_id=81_000 + i, first_name="Subscriber") for i in range(5)]
+        session.add_all(users)
+        await session.flush()
+        trackers = [Tracker(user_id=user.id, query="bad" if i < 2 else "iphone 13")
+                    for i, user in enumerate(users)]
+        session.add_all(trackers)
+        await session.commit()
+        failed_ids = {t.id for t in trackers[:2]}
+
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+
+    assert [c["query"] for c in calls] == ["bad", "iphone 13"]
+    assert collector._tracker_failure_counts == dict.fromkeys(failed_ids, 1)
+    async with tick_db() as session:
+        rows = list((await session.scalars(select(Tracker))).all())
+        assert all((t.last_checked_at is None) == (t.id in failed_ids) for t in rows)
+
+
+@pytest.mark.asyncio
+async def test_tracker_raw_page_shared_across_modes_but_not_categories(
+    monkeypatch, mock_bot, tick_db,
+):
+    calls = []
+    monkeypatch.setattr(collector, "KufarClient", _kufar_stub(
+        lambda q: [_ad(7, 100_000), _ad(8, 140_000, "iPhone 13 Pro")], calls,
+    ))
+    async with tick_db() as session:
+        users = [make_user(telegram_user_id=82_000 + i, first_name="Subscriber") for i in range(3)]
+        session.add_all(users)
+        await session.flush()
+        trackers = [Tracker(
+            user_id=user.id, query="iphone 13", strict_mode=i != 0,
+            category_id=17010 if i == 2 else None,
+            last_checked_at=datetime.now(UTC) - timedelta(minutes=20),
+        ) for i, user in enumerate(users)]
+        session.add_all(trackers)
+        await session.commit()
+        broad, strict, category = [t.id for t in trackers]
+
+    await check_trackers(mock_bot, tick_db, _TICK_SETTINGS)
+
+    assert len(calls) == 2
+    assert {c["category"] for c in calls} == {None, 17010}
+    assert await _event_keys(tick_db) == {
+        (broad, 7, "new_listing"), (broad, 8, "new_listing"),
+        (strict, 7, "new_listing"), (category, 7, "new_listing"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tracker_prefetch_overlaps_http_and_bounds_tasks():
+    from collections import OrderedDict
+
+    active = peak = 0
+
+    async def search(**kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return {"ads": []}
+        finally:
+            active -= 1
+
+    cache = OrderedDict()
+    groups = {f"key-{i}": [Tracker(id=i, query=f"query {i}")] for i in range(8)}
+    client = MagicMock(search=AsyncMock(side_effect=search))
+    received = []
+    async for key, _, _ in collector._tracker_search_pages(
+        client, groups, cache, deadline=collector._monotonic() + 10,
+    ):
+        received.append(key)
+        await asyncio.sleep(0)
+    assert received == list(groups)
+    assert peak == collector._TRACKER_FETCH_CONCURRENCY
+    assert active == 0
+
+
+@pytest.mark.asyncio
+async def test_tracker_prefetch_cancels_unconsumed_http_on_budget_end(monkeypatch):
+    from collections import OrderedDict
+
+    clock = [0]
+    active = 0
+
+    async def search(**kwargs):
+        nonlocal active
+        if kwargs["query"] == "first":
+            return {"ads": []}
+        active += 1
+        try:
+            await asyncio.Event().wait()
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(collector, "_monotonic", lambda: clock[0])
+    groups = {q: [Tracker(id=i, query=q)] for i, q in enumerate(("first", "second", "third"))}
+    async for key, _, _ in collector._tracker_search_pages(
+        MagicMock(search=search), groups, OrderedDict(), deadline=10,
+    ):
+        assert key == "first"
+        await asyncio.sleep(0)
+        assert active == 2
+        clock[0] = 11
+    assert active == 0
+
+
+@pytest.mark.asyncio
+async def test_event_dedup_and_threshold_floors_only_load_current_ads(populated_session):
+    session, user, tracker = populated_session
+    session.add_all([TrackerEvent(
+        tracker_id=tracker.id, user_id=user.id, ad_id=i, query=tracker.query,
+        event_type="price_threshold_alert", title="Item", link="https://www.kufar.by/item/1",
+        price_byn=100,
+    ) for i in range(1, 201)])
+    await session.flush()
+    seen = await collector._recent_events_by_tracker(session, [tracker.id], ad_ids=[7])
+    floors = await collector._threshold_alert_floors(session, [tracker.id], ad_ids=[7])
+    assert seen == {tracker.id: {(7, "price_threshold_alert")}}
+    assert floors == {tracker.id: {(7, "price_threshold_alert"): 100}}
+    assert await collector._recent_events_by_tracker(session, [tracker.id], ad_ids=[]) == {}
+    assert await collector._threshold_alert_floors(session, [tracker.id], ad_ids=[]) == {}
 
 
 @pytest.mark.asyncio

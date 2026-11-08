@@ -162,6 +162,95 @@ async def test_listing_description_timeout_starts_after_queue_wait(mock_settings
             timeout.assert_called_once_with(12.0)
 
 
+async def test_listing_descriptions_share_downloads_and_bound_cache(mock_settings, monkeypatch):
+    calls = []
+
+    async def respond(request):
+        calls.append(request)
+        await asyncio.sleep(0)
+        return httpx.Response(200, text='<div itemprop="description">Shared description</div>')
+
+    monkeypatch.setattr(kufar_client_module, "DESCRIPTION_CACHE_LIMIT", 2)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        kufar = KufarClient(mock_settings, http_client=http)
+        results = await asyncio.gather(*(kufar.get_listing_description(12345) for _ in range(100)))
+        assert results == ["Shared description"] * 100
+        assert await kufar.get_listing_description(12345) == "Shared description"
+        assert len(calls) == 1
+        kufar._description_cache[12345] = (0, "Expired text")
+        assert await kufar.get_listing_description(12345) == "Shared description"
+        await kufar.get_listing_description(12346)
+        await kufar.get_listing_description(12347)
+        assert len(calls) == 4
+        assert list(kufar._description_cache) == [12346, 12347]
+        assert not kufar._description_tasks
+        await kufar.aclose()
+        assert not kufar._description_cache
+
+
+async def test_failed_listing_description_is_not_cached(mock_settings):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, text='<div itemprop="description">Recovered</div>')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        kufar = KufarClient(mock_settings, http_client=http)
+        with pytest.raises(httpx.HTTPStatusError):
+            await kufar.get_listing_description(12345)
+        assert await kufar.get_listing_description(12345) == "Recovered"
+        assert len(calls) == 2
+
+
+async def test_cancelled_description_reader_does_not_cancel_other_subscribers(mock_settings):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def respond(request):
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, text='<div itemprop="description">Still available</div>')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        kufar = KufarClient(mock_settings, http_client=http)
+        first = asyncio.create_task(kufar.get_listing_description(12345))
+        await entered.wait()
+        second = asyncio.create_task(kufar.get_listing_description(12345))
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        release.set()
+        assert await second == "Still available"
+
+
+async def test_search_spaces_http_starts_after_semaphore_queue(mock_settings, monkeypatch):
+    mock_settings.kufar_parallel_semaphore = 1
+    entered, release = asyncio.Event(), asyncio.Event()
+    order = []
+
+    async def respond(request):
+        order.append("request")
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json={"ads": []})
+
+    async def delay():
+        order.append("delay")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        kufar = KufarClient(mock_settings, http_client=http)
+        monkeypatch.setattr(kufar, "_enforce_delay", delay)
+        tasks = [asyncio.create_task(kufar.search(query=str(i))) for i in range(3)]
+        await entered.wait()
+        await asyncio.sleep(0)
+        assert order == ["delay", "request"]
+        release.set()
+        await asyncio.gather(*tasks)
+        assert order == ["delay", "request"] * 3
+
+
 @pytest.fixture
 def mock_settings() -> MagicMock:
     settings = MagicMock()

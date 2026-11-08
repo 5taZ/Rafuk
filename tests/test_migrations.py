@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261108_0032"
+EXPECTED_HEAD = "20261108_0033"
 
 
 def _alembic_config() -> Config:
@@ -105,6 +105,26 @@ def test_alembic_revisions_have_unique_ids() -> None:
     ids = [rev.revision for rev in script.walk_revisions("base", "heads")]
     duplicates = {i for i in ids if ids.count(i) > 1}
     assert not duplicates, f"Duplicate revision IDs: {duplicates}"
+
+
+def test_tracker_scaling_indexes_round_trip_without_touching_data(tmp_path: Path) -> None:
+    from api.models import Base
+
+    path = tmp_path / "tracker-indexes.db"
+    engine = sa.create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    names = {"idx_trackers_due", "idx_tracker_events_tracker_ad_created"}
+
+    def indexes():
+        with sqlite3.connect(path) as con:
+            return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+
+    assert names <= indexes()
+    _run_alembic(path, ("stamp", "20261108_0033"), ("downgrade", "-1"))
+    assert not names & indexes()
+    _run_alembic(path, ("upgrade", "head"))
+    assert names <= indexes()
 
 
 # ── Scheduler delivery-state revision on SQLite ─────────────────────────

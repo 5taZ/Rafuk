@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
     column,
     event,
     func,
@@ -368,6 +369,15 @@ class Tracker(
             postgresql_where=column("active", Boolean).is_(True),
         ),
         Index("idx_trackers_last_checked", "last_checked_at"),
+        Index(
+            "idx_trackers_due", "last_checked_at", "id",
+            postgresql_where=and_(
+                column("active", Boolean).is_(True), column("paused", Boolean).is_(False),
+            ),
+            sqlite_where=and_(
+                column("active", Boolean).is_(True), column("paused", Boolean).is_(False),
+            ),
+        ),
         Index("idx_trackers_active_paused", "active", "paused"),
         Index("idx_trackers_query_category", "query", "strict_mode", "category_id"),
     )
@@ -543,6 +553,7 @@ class TrackerEvent(Base, UserIDMixin):
         # dropped it in favour of the covering index below, so declaring it
         # here only made create_all-built test schemas differ from prod.
         Index("idx_tracker_events_tracker_created", "tracker_id", column("created_at").desc()),
+        Index("idx_tracker_events_tracker_ad_created", "tracker_id", "ad_id", "created_at"),
         # P1-02 (20260509_0001): covers WHERE user_id=? ORDER BY created_at
         # DESC, id DESC.
         Index(

@@ -13,6 +13,12 @@ function createApiTrackers(context) {
     let feedScope = null;
     let categoriesRequest = null;
     let formBusy = false;
+    const minRefreshDelay = 30_000;
+    const maxRefreshDelay = 120_000;
+    let trackerRefreshDelay = minRefreshDelay;
+    let feedRefreshDelay = minRefreshDelay;
+    let nextTrackerRefresh = 0;
+    let nextFeedRefresh = 0;
 
     function stopTrackerRefresh() {
         clearInterval(refreshTimer);
@@ -22,11 +28,17 @@ function createApiTrackers(context) {
     function startTrackerRefresh() {
         stopTrackerRefresh();
         if (!hasTelegramInitData()) return;
+        trackerRefreshDelay = feedRefreshDelay = minRefreshDelay;
+        nextTrackerRefresh = nextFeedRefresh = 0;
         refreshTimer = setInterval(() => {
             if (state.ui.activeView !== "tracking" || document.hidden) return;
-            void loadTrackers({ skipIfLoading: true, background: true });
-            if (tracking.pane === "events") void refreshTrackerEvents({ background: true });
-        }, 30_000);
+            const now = Date.now();
+            if (tracking.pane === "events") {
+                if (now >= nextFeedRefresh) void refreshTrackerEvents({ background: true });
+            } else if (now >= nextTrackerRefresh) {
+                void loadTrackers({ skipIfLoading: true, background: true });
+            }
+        }, minRefreshDelay);
     }
 
     async function loadTrackers({ skipIfLoading = false, background = false } = {}) {
@@ -42,11 +54,19 @@ function createApiTrackers(context) {
         try {
             const items = await getJson("/api/v1/trackers");
             if (requestId !== tracking._requestId) return;
-            changed ||= Boolean(tracking.loadError) || JSON.stringify(items) !== JSON.stringify(tracking.items);
+            const signature = (rows) => JSON.stringify(rows, (key, value) =>
+                key === "avg_events_per_day" ? undefined : value);
+            const dataChanged = signature(items) !== signature(tracking.items);
+            changed ||= Boolean(tracking.loadError) || dataChanged;
+            trackerRefreshDelay = background && !dataChanged
+                ? Math.min(trackerRefreshDelay * 2, maxRefreshDelay) : minRefreshDelay;
+            nextTrackerRefresh = Date.now() + trackerRefreshDelay;
             tracking.items = items;
             tracking.loadError = null;
         } catch (error) {
             if (requestId !== tracking._requestId) return;
+            trackerRefreshDelay = Math.min(trackerRefreshDelay * 2, maxRefreshDelay);
+            nextTrackerRefresh = Date.now() + trackerRefreshDelay;
             if (error.sessionExpired || error.accountDeleted) stopTrackerRefresh();
             if (!background || !tracking.items.length) {
                 tracking.loadError = "Не удалось загрузить трекеры.";
@@ -89,12 +109,18 @@ function createApiTrackers(context) {
         try {
             const events = await getJson(`/api/v1/tracker-events?${scope}`, { signal: controller.signal });
             if (controller.signal.aborted) return;
-            changed ||= Boolean(tracking.eventsError) || JSON.stringify(events) !== JSON.stringify(tracking.events);
+            const dataChanged = JSON.stringify(events) !== JSON.stringify(tracking.events);
+            changed ||= Boolean(tracking.eventsError) || dataChanged;
+            feedRefreshDelay = background && !dataChanged
+                ? Math.min(feedRefreshDelay * 2, maxRefreshDelay) : minRefreshDelay;
+            nextFeedRefresh = Date.now() + feedRefreshDelay;
             tracking.events = events;
             for (const event of events) tracking.eventSources.set(event.tracker_id, event.query);
             tracking.eventsError = null;
         } catch (error) {
             if (controller.signal.aborted) return;
+            feedRefreshDelay = Math.min(feedRefreshDelay * 2, maxRefreshDelay);
+            nextFeedRefresh = Date.now() + feedRefreshDelay;
             if (error.sessionExpired || error.accountDeleted) stopTrackerRefresh();
             if (!background || !tracking.events.length) {
                 tracking.eventsError = "Не удалось загрузить ленту.";

@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, insert, select
+from sqlalchemy.orm import Session
 
 from api.database import get_engine, get_session_factory
 from api.models import Base, QueryListingState, QuerySnapshot
@@ -413,6 +414,107 @@ async def test_sync_refreshes_listing_outside_the_load_window(monkeypatch) -> No
             state = (await session.execute(select(QueryListingState))).scalar_one()
         assert float(state.last_price_byn) == 1000.0
         assert as_utc(state.last_seen_at) == observed
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_listing_sync_batches_inserts_and_does_not_materialize_old_history() -> None:
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    statements = []
+    loaded = []
+
+    def record_sql(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    def record_load(session, instance):
+        if isinstance(instance, QueryListingState):
+            loaded.append(instance.ad_id)
+
+    try:
+        now = datetime.now(UTC)
+        async with sf() as session:
+            await session.execute(insert(QueryListingState), [dict(
+                query="bulk", ad_id=i, title=f"Old {i}", link=f"https://www.kufar.by/item/{i}",
+                active=i == 1, last_price_byn=1100,
+                first_seen_at=now - timedelta(days=90), last_seen_at=now - timedelta(days=60),
+            ) for i in range(1, 1001)])
+            await session.commit()
+        event.listen(engine.sync_engine, "before_cursor_execute", record_sql)
+        event.listen(Session, "loaded_as_persistent", record_load)
+        async with sf() as session:
+            result = await sync_query_listing_states(
+                session, query="bulk", observed_at=now, total_results=50,
+                ads=[dict(ad_id=i, subject=f"New {i}", price_byn=100_000,
+                          ad_link=f"https://www.kufar.by/item/{i}") for i in range(1000, 1050)],
+            )
+            await session.commit()
+        assert len(result.new_listings) == 49
+        assert len(result.listings) == 50
+        assert len(statements) <= 6, "SQL round trips must scale with batches, not ads"
+        assert len(loaded) <= 50, "Historical rows must stay in the database"
+        async with sf() as session:
+            disappeared = await session.scalar(select(QueryListingState).where(
+                QueryListingState.query == "bulk", QueryListingState.ad_id == 1,
+            ))
+            assert disappeared.active is False
+            revived = await session.scalar(select(QueryListingState).where(
+                QueryListingState.query == "bulk", QueryListingState.ad_id == 1000,
+            ))
+            assert revived.active is True
+            assert as_utc(revived.first_seen_at) == now - timedelta(days=90)
+            assert float(revived.last_price_byn) == 1000
+    finally:
+        if event.contains(engine.sync_engine, "before_cursor_execute", record_sql):
+            event.remove(engine.sync_engine, "before_cursor_execute", record_sql)
+            event.remove(Session, "loaded_as_persistent", record_load)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_listing_bulk_insert_conflict_refreshes_winner_without_rolling_back() -> None:
+    engine = get_engine()
+    sf = get_session_factory(engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        first_seen = datetime.now(UTC) - timedelta(days=1)
+        async with sf() as session:
+            session.add(_listing(9, first_seen=first_seen, price=1100))
+            await session.commit()
+        async with sf() as session:
+            real_execute = session.execute
+            missed = False
+
+            async def miss_first_lookup(stmt, *args, **kwargs):
+                nonlocal missed
+                if not missed and stmt.is_select:
+                    missed = True
+                    return await real_execute(select(QueryListingState).where(False))
+                return await real_execute(stmt, *args, **kwargs)
+
+            session.execute = miss_first_lookup
+            session.add(QuerySnapshot(query="unrelated", snapshot_at=first_seen))
+            result = await sync_query_listing_states(
+                session, query="per-tracker", observed_at=datetime.now(UTC), total_results=1,
+                ads=[dict(ad_id=9, subject="Item 9", price_byn=100_000,
+                          ad_link="https://www.kufar.by/item/9")],
+            )
+            assert result.new_listings == []
+            assert result.price_drops[0][1] == 100
+            assert result.listings[0].first_seen_at.replace(tzinfo=UTC) == first_seen
+            await session.commit()
+        async with sf() as session:
+            assert await session.scalar(select(QuerySnapshot).where(
+                QuerySnapshot.query == "unrelated",
+            )) is not None
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)

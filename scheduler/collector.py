@@ -5,8 +5,8 @@ import hashlib
 import logging
 import signal
 import time
-from collections import defaultdict
-from collections.abc import Awaitable, Collection, Mapping
+from collections import OrderedDict, defaultdict
+from collections.abc import AsyncIterator, Awaitable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -134,8 +134,10 @@ _configure_logging(service="scheduler")
 
 logger = logging.getLogger(__name__)
 
-# BE-03 / INF-05: safety cap on the trackers one tick loads.
+# BE-03 / INF-05: bound each database page, not the total work per tick.
 _DUE_TRACKER_LIMIT = 2000
+_TRACKER_FETCH_CONCURRENCY = 2
+_TRACKER_PAGE_CACHE_LIMIT = 64
 # The shortest interval a tracker is checked at, whatever it asks for.
 _MIN_CHECK_INTERVAL_MIN = 15
 
@@ -441,6 +443,8 @@ async def _recent_events_by_tracker(
     session: AsyncSession,
     tracker_ids: list[int],
     hours: int = 24,
+    *,
+    ad_ids: Collection[int] | None = None,
 ) -> dict[int, set[tuple[int, str]]]:
     """Bulk-load recently-seen (ad_id, event_type) pairs grouped by tracker_id.
 
@@ -448,7 +452,7 @@ async def _recent_events_by_tracker(
     everything for the tick in one query keeps DB round-trips bounded by the
     number of query groups instead of by the total tracker count.
     """
-    if not tracker_ids:
+    if not tracker_ids or ad_ids is not None and not ad_ids:
         return {}
     cutoff = datetime.now(UTC) - timedelta(hours=hours)
     out: dict[int, set[tuple[int, str]]] = defaultdict(set)
@@ -463,6 +467,7 @@ async def _recent_events_by_tracker(
                 TrackerEvent.tracker_id.in_(batch),
                 TrackerEvent.created_at >= cutoff,
                 TrackerEvent.ad_id.is_not(None),
+                True if ad_ids is None else TrackerEvent.ad_id.in_(ad_ids),
             )
         )
         for row in result:
@@ -476,6 +481,8 @@ _THRESHOLD_EVENT_TYPES = ("price_threshold_alert", "discount_alert")
 async def _threshold_alert_floors(
     session: AsyncSession,
     tracker_ids: list[int],
+    *,
+    ad_ids: Collection[int] | None = None,
 ) -> dict[int, dict[tuple[int, str], Decimal | None]]:
     """RV-SCH-05: lowest price each (tracker, ad, threshold type) was already
     alerted at, over every retained event.
@@ -484,7 +491,7 @@ async def _threshold_alert_floors(
     every day; ``_detect_threshold_alerts`` now repeats an alert only when
     the price drops below this floor.
     """
-    if not tracker_ids:
+    if not tracker_ids or ad_ids is not None and not ad_ids:
         return {}
     out: dict[int, dict[tuple[int, str], Decimal | None]] = defaultdict(dict)
     batch_size = 500
@@ -501,6 +508,7 @@ async def _threshold_alert_floors(
                 TrackerEvent.tracker_id.in_(batch),
                 TrackerEvent.event_type.in_(_THRESHOLD_EVENT_TYPES),
                 TrackerEvent.ad_id.is_not(None),
+                True if ad_ids is None else TrackerEvent.ad_id.in_(ad_ids),
             )
             .group_by(TrackerEvent.tracker_id, TrackerEvent.ad_id, TrackerEvent.event_type)
         )
@@ -872,9 +880,7 @@ class _TickContext:
     settings: Settings
     observed_at: datetime
     bucket_at: datetime
-    seen_by_tracker: dict[int, set[tuple[int, str]]]
     trend_sent_recently: set[int]
-    alert_floors: dict[int, dict[tuple[int, str], Decimal | None]]
     # (telegram_user_id, dedup_key) pairs committed to the outbox this tick.
     queued_keys: set[tuple[int, str]]
 
@@ -928,177 +934,253 @@ async def _check_trackers_inner(
                 for interval in intervals
             ),
         )
-        result = await session.execute(
-            select(Tracker)
-            .where(*eligible, due)
-            .options(joinedload(Tracker.user))
-            .order_by(Tracker.last_checked_at.asc().nulls_first())
+        base_stmt = (
+            select(Tracker).where(*eligible, due).options(joinedload(Tracker.user))
+            .order_by(Tracker.last_checked_at.asc().nulls_first(), Tracker.id.asc())
             .limit(_DUE_TRACKER_LIMIT)
         )
-        trackers = list(result.scalars().unique())
-        if not trackers:
-            logger.debug("No active trackers due for check")
-            return
-
-        # RV-SCH-01: one group per search key — the key the listing states
-        # and snapshots live under. Grouping by the raw (query, strict,
-        # category) split "iPhone 13" and "iphone 13" into two groups over
-        # the same states: Kufar was asked twice and the second group found
-        # nothing new.
-        trackers_by_key: dict[str, list[Tracker]] = defaultdict(list)
-        for tracker in trackers:
-            search_key = build_query_key(tracker.query, tracker.strict_mode, tracker.category_id)
-            trackers_by_key[search_key].append(tracker)
-
-        tracker_ids = [t.id for t in trackers]
-        # Bulk-load recently-seen events for all due trackers in a single
-        # query — avoids N+1 SELECTs inside persist_tracker_events.
-        seen_by_tracker = await _recent_events_by_tracker(session, tracker_ids)
-        # Trend events live at the query level (ad_id is null) so they
-        # need their own debounce lookup. Bulk-load once per tick.
-        trend_sent_recently = await _recent_trend_event_tracker_ids(session, tracker_ids)
-        alert_floors = await _threshold_alert_floors(
-            session,
-            [t.id for t in trackers if t.alert_price_threshold or t.alert_discount_percent],
-        )
-
-        logger.info(
-            "Tracker check: %d due, %d search key(s)",
-            len(trackers),
-            len(trackers_by_key),
-        )
-
+        cursor = None
+        queued_keys: set[tuple[int, str]] = set()
+        page_cache: OrderedDict[str, dict | Exception] = OrderedDict()
         client = _get_kufar_client(settings)
-        observed_at = now
-        ctx = _TickContext(
-            settings=settings,
-            observed_at=observed_at,
-            bucket_at=snapshot_bucket(observed_at),
-            seen_by_tracker=seen_by_tracker,
-            trend_sent_recently=trend_sent_recently,
-            alert_floors=alert_floors,
-            queued_keys=set(),
-        )
-        total_errors = 0
-        total_queued = 0
+        checked = 0
+        while True:
+            stmt = base_stmt
+            if cursor is not None:
+                checked_at, tracker_id = cursor
+                if checked_at is None:
+                    stmt = stmt.where(or_(
+                        Tracker.last_checked_at.is_not(None),
+                        and_(Tracker.last_checked_at.is_(None), Tracker.id > tracker_id),
+                    ))
+                else:
+                    stmt = stmt.where(or_(
+                        Tracker.last_checked_at > checked_at,
+                        and_(Tracker.last_checked_at == checked_at, Tracker.id > tracker_id),
+                    ))
+            trackers = list((await session.scalars(stmt)).unique())
+            if not trackers:
+                break
+            # Capture the original ordering before processing advances cursors.
+            cursor = (trackers[-1].last_checked_at, trackers[-1].id)
+            await _check_tracker_batch(
+                session, settings, trackers, client, page_cache, queued_keys,
+                observed_at=now, deadline=deadline,
+            )
+            checked += len(trackers)
+            if len(trackers) < _DUE_TRACKER_LIMIT or _monotonic() >= deadline:
+                break
+        logger.info("Tracker tick: loaded %d due tracker(s)", checked)
 
-        # M18: per-group commit — expire_on_commit=False prevents
-        # SQLAlchemy from expiring loaded Tracker/User objects after
-        # each mid-loop commit, which would trigger lazy loads in the
-        # async session on subsequent iterations.
-        session.expire_on_commit = False
 
-        for position, (search_key, query_trackers) in enumerate(trackers_by_key.items()):
-            # RV-SCH-02: budget, not a hard timeout — stop taking new
-            # keys, never abandon the one in flight.
+async def _tracker_search_pages(
+    client: KufarClient,
+    groups: dict[str, list[Tracker]],
+    cache: OrderedDict[str, dict | Exception],
+    *,
+    deadline: float,
+) -> AsyncIterator[tuple[str, list[Tracker], dict | Exception]]:
+    """Overlap bounded HTTP prefetch with serial, atomic database writes."""
+    entries = list(groups.items())
+    pending: dict[str, asyncio.Task] = {}
+
+    def raw_key(trackers: list[Tracker]) -> str:
+        lead = min(trackers, key=lambda t: t.id)
+        # Strictness is a local title filter, not an upstream search parameter.
+        return build_query_key(lead.query, False, lead.category_id)
+
+    async def fetch(lead: Tracker) -> dict | Exception:
+        try:
+            return await client.search(
+                query=lead.query, currency="BYN", size=50, category=lead.category_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — failures belong to their query group
+            return exc
+
+    def schedule(trackers: list[Tracker]) -> None:
+        key = raw_key(trackers)
+        if key not in cache and key not in pending:
+            pending[key] = asyncio.create_task(fetch(min(trackers, key=lambda t: t.id)))
+
+    next_position = 0
+    try:
+        for position, (search_key, trackers) in enumerate(entries):
             if position and _monotonic() >= deadline:
                 logger.warning(
-                    "Tracker check budget of %ds spent — deferring %d of %d "
-                    "search key(s) to the next tick",
-                    _CYCLE_BUDGET_SECONDS,
-                    len(trackers_by_key) - position,
-                    len(trackers_by_key),
+                    "Tracker budget spent; deferring %d search key(s)", len(entries) - position,
                 )
                 break
-            # RV-SCH-01: Kufar is asked once per key, in the wording of
-            # the key's oldest tracker (stable from tick to tick).
-            lead_tracker = min(query_trackers, key=lambda t: t.id)
-            query = lead_tracker.query
-            strict_mode = lead_tracker.strict_mode
-            category_id = lead_tracker.category_id
-            # Read before the savepoint: its rollback expires the trackers.
-            key_tracker_ids = [t.id for t in query_trackers]
-            try:
-                payload = await client.search(
-                    query=query,
-                    currency="BYN",
-                    size=50,
-                    category=category_id,
-                )
-                ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
-            except Exception as exc:  # noqa: BLE001 — RV2-DS-01: isolate the key
-                total_errors += 1
-                if _is_kufar_outage(exc):
-                    logger.warning(
-                        "Kufar unavailable, skipping query %r [strict=%s category=%s]",
-                        query,
-                        strict_mode,
-                        category_id,
-                    )
-                    continue
-                logger.exception(
-                    "Error fetching query %r [strict=%s category=%s], skipping",
+            schedule(trackers)
+            next_position = max(next_position, position + 1)
+            key = raw_key(trackers)
+            if key not in cache:
+                cache[key] = await pending[key]
+                del pending[key]
+                while len(cache) > _TRACKER_PAGE_CACHE_LIMIT:
+                    cache.popitem(last=False)
+            cache.move_to_end(key)
+            payload = cache[key]
+            # Let failure handling release any pause/update locks before
+            # starting more HTTP work on the next iteration.
+            while (next_position < len(entries) and len(pending) < _TRACKER_FETCH_CONCURRENCY
+                   and not isinstance(payload, Exception) and _monotonic() < deadline):
+                schedule(entries[next_position][1])
+                next_position += 1
+            yield search_key, trackers, payload
+    finally:
+        for task in pending.values():
+            task.cancel()
+        await asyncio.gather(*pending.values(), return_exceptions=True)
+
+
+async def _check_tracker_batch(
+    session: AsyncSession,
+    settings: Settings,
+    trackers: list[Tracker],
+    client: KufarClient,
+    page_cache: OrderedDict[str, dict | Exception],
+    queued_keys: set[tuple[int, str]],
+    *,
+    observed_at: datetime,
+    deadline: float,
+) -> None:
+    # RV-SCH-01: one group per search key — the key the listing states
+    # and snapshots live under. Grouping by the raw (query, strict,
+    # category) split "iPhone 13" and "iphone 13" into two groups over
+    # the same states: Kufar was asked twice and the second group found
+    # nothing new.
+    trackers_by_key: dict[str, list[Tracker]] = defaultdict(list)
+    for tracker in trackers:
+        search_key = build_query_key(tracker.query, tracker.strict_mode, tracker.category_id)
+        trackers_by_key[search_key].append(tracker)
+
+    tracker_ids = [t.id for t in trackers]
+    # Trend events live at the query level (ad_id is null) so they
+    # need their own debounce lookup. Bulk-load once per tick.
+    trend_sent_recently = await _recent_trend_event_tracker_ids(session, tracker_ids)
+
+    logger.info(
+        "Tracker check: %d due, %d search key(s)",
+        len(trackers),
+        len(trackers_by_key),
+    )
+
+    ctx = _TickContext(
+        settings=settings,
+        observed_at=observed_at,
+        bucket_at=snapshot_bucket(observed_at),
+        trend_sent_recently=trend_sent_recently,
+        queued_keys=queued_keys,
+    )
+    total_errors = 0
+    total_queued = 0
+
+    # M18: per-group commit — expire_on_commit=False prevents
+    # SQLAlchemy from expiring loaded Tracker/User objects after
+    # each mid-loop commit, which would trigger lazy loads in the
+    # async session on subsequent iterations.
+    session.expire_on_commit = False
+
+    # Release the read transaction before waiting for upstream I/O.
+    await session.commit()
+    async for search_key, query_trackers, payload in _tracker_search_pages(
+        client, trackers_by_key, page_cache, deadline=deadline,
+    ):
+        # RV-SCH-01: Kufar is asked once per key, in the wording of
+        # the key's oldest tracker (stable from tick to tick).
+        lead_tracker = min(query_trackers, key=lambda t: t.id)
+        query = lead_tracker.query
+        strict_mode = lead_tracker.strict_mode
+        category_id = lead_tracker.category_id
+        # Read before the savepoint: its rollback expires the trackers.
+        key_tracker_ids = [t.id for t in query_trackers]
+        try:
+            if isinstance(payload, Exception):
+                raise payload
+            ads = apply_search_mode(payload.get("ads", []), query, strict_mode)
+        except Exception as exc:  # noqa: BLE001 — RV2-DS-01: isolate the key
+            total_errors += 1
+            if _is_kufar_outage(exc):
+                logger.warning(
+                    "Kufar unavailable, skipping query %r [strict=%s category=%s]",
                     query,
                     strict_mode,
                     category_id,
-                )
-                await _record_key_failure(
-                    session,
-                    key_tracker_ids,
-                    advance_to=None if isinstance(exc, _TRACKER_QUERY_ERRORS) else observed_at,
                 )
                 continue
+            logger.exception(
+                "Error fetching query %r [strict=%s category=%s], skipping",
+                query,
+                strict_mode,
+                category_id,
+            )
+            await _record_key_failure(
+                session,
+                key_tracker_ids,
+                advance_to=None if isinstance(exc, _TRACKER_QUERY_ERRORS) else observed_at,
+            )
+            continue
 
-            group_keys: set[tuple[int, str]] = set()
-            # Use a savepoint per query group so that a rollback only
-            # discards THIS group's changes — previous groups' flushed
-            # data stays intact in the outer transaction. RV-SCH-02: the
-            # handler sits outside the savepoint so a failure really
-            # rolls it back (inside it, the savepoint was released with
-            # the group half-written) — state, events, cursors and
-            # outbox rows of a key commit or vanish together.
-            try:
-                async with session.begin_nested():
-                    group_queued = await _process_search_key(
-                        session,
-                        ctx,
-                        search_key=search_key,
-                        query=query,
-                        strict_mode=strict_mode,
-                        category_id=category_id,
-                        ads=ads,
-                        trackers=query_trackers,
-                        group_keys=group_keys,
-                    )
-            except _TRACKER_QUERY_ERRORS:
-                total_errors += 1
-                group_keys.clear()
-                logger.exception(
-                    "Error processing query %r [strict=%s category=%s], skipping",
-                    query,
-                    strict_mode,
-                    category_id,
+        group_keys: set[tuple[int, str]] = set()
+        # Use a savepoint per query group so that a rollback only
+        # discards THIS group's changes — previous groups' flushed
+        # data stays intact in the outer transaction. RV-SCH-02: the
+        # handler sits outside the savepoint so a failure really
+        # rolls it back (inside it, the savepoint was released with
+        # the group half-written) — state, events, cursors and
+        # outbox rows of a key commit or vanish together.
+        try:
+            async with session.begin_nested():
+                group_queued = await _process_search_key(
+                    session,
+                    ctx,
+                    search_key=search_key,
+                    query=query,
+                    strict_mode=strict_mode,
+                    category_id=category_id,
+                    ads=ads,
+                    trackers=query_trackers,
+                    group_keys=group_keys,
                 )
-            except Exception:  # noqa: BLE001 — RV2-DS-01: isolate the key
-                total_errors += 1
-                group_keys.clear()
-                logger.exception(
-                    "Unexpected error processing query %r [strict=%s category=%s]",
-                    query,
-                    strict_mode,
-                    category_id,
-                )
-                await _record_key_failure(session, key_tracker_ids, advance_to=observed_at)
-            else:
-                total_queued += group_queued
-                # C-04: success path — clear failure counters for every
-                # tracker in this group so transient outages don't
-                # accumulate across long runtimes.
-                for tracker_id in key_tracker_ids:
-                    _tracker_failure_counts.pop(tracker_id, None)
+        except _TRACKER_QUERY_ERRORS:
+            total_errors += 1
+            group_keys.clear()
+            logger.exception(
+                "Error processing query %r [strict=%s category=%s], skipping",
+                query,
+                strict_mode,
+                category_id,
+            )
+        except Exception:  # noqa: BLE001 — RV2-DS-01: isolate the key
+            total_errors += 1
+            group_keys.clear()
+            logger.exception(
+                "Unexpected error processing query %r [strict=%s category=%s]",
+                query,
+                strict_mode,
+                category_id,
+            )
+            await _record_key_failure(session, key_tracker_ids, advance_to=observed_at)
+        else:
+            total_queued += group_queued
+            # C-04: success path — clear failure counters for every
+            # tracker in this group so transient outages don't
+            # accumulate across long runtimes.
+            for tracker_id in key_tracker_ids:
+                _tracker_failure_counts.pop(tracker_id, None)
 
-            # M18: per-group commit so completed groups survive a later crash.
-            # expire_on_commit=False (set above) keeps loaded objects usable.
-            await session.commit()
-            ctx.queued_keys |= group_keys
-
-        # Commit whatever succeeded — errors are logged but don't block
+        # M18: per-group commit so completed groups survive a later crash.
+        # expire_on_commit=False (set above) keeps loaded objects usable.
         await session.commit()
-        logger.info(
-            "Tracker check complete: queued %d notification(s), errors %d",
-            total_queued,
-            total_errors,
-        )
+        ctx.queued_keys |= group_keys
+
+    # Commit whatever succeeded — errors are logged but don't block
+    await session.commit()
+    logger.info(
+        "Tracker check complete: queued %d notification(s), errors %d",
+        total_queued,
+        total_errors,
+    )
 
 
 def _is_kufar_outage(exc: Exception) -> bool:
@@ -1228,6 +1310,15 @@ async def _process_search_key(
             total_results=len(ads),
         )
     ads_by_id = {int(ad["ad_id"]): ad for ad in ads if int(ad.get("ad_id", 0)) > 0}
+    # A day's events can be millions of rows across all due subscribers.
+    # Dedup only needs ads on this page, still loaded in tracker batches.
+    seen_by_tracker = await _recent_events_by_tracker(
+        session, [t.id for t in trackers], ad_ids=ads_by_id.keys(),
+    )
+    alert_floors = await _threshold_alert_floors(
+        session, [t.id for t in trackers if t.alert_price_threshold or t.alert_discount_percent],
+        ad_ids=ads_by_id.keys(),
+    )
     # Hoist these out of the per-tracker loop — they
     # depend only on the query result, not the tracker.
     ads_list = list(ads_by_id.values())
@@ -1278,7 +1369,7 @@ async def _process_search_key(
             tracker,
             tracker_sync_result,
             ads_by_id,
-            seen=ctx.seen_by_tracker.get(tracker.id, set()),
+            seen=seen_by_tracker.get(tracker.id, set()),
             trend_signal=trend_signal,
             trend_already_sent=trend_already_sent,
         )
@@ -1329,7 +1420,7 @@ async def _process_search_key(
             tracker,
             market_stats=market_stats,
             category_price_stats=category_price_stats,
-            alerted=ctx.alert_floors.get(tracker.id),
+            alerted=alert_floors.get(tracker.id),
         )
         if threshold_events:
             session.add_all(threshold_events)

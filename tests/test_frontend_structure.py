@@ -40,7 +40,6 @@ def _expected_app_bundle_text() -> str:
     every build-script side-effect.
     """
     import base64
-    import subprocess
 
     from scripts.minify_js import minify_js_text
 
@@ -64,11 +63,7 @@ def _expected_app_bundle_text() -> str:
     for lm in lazy_modules:
         lm_path = JS_DIR / lm
         if lm_path.exists():
-            result = subprocess.run(
-                ["openssl", "dgst", "-sha384", "-binary", str(lm_path)],
-                capture_output=True, check=True,
-            )
-            h = base64.b64encode(result.stdout).decode()
+            h = base64.b64encode(hashlib.sha384(lm_path.read_bytes()).digest()).decode()
             integrity_lines.append(f'  "{lm}": "sha384-{h}",\n')
     integrity_lines.append('};\n')
 

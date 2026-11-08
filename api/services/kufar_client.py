@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections import OrderedDict
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -38,6 +39,8 @@ RETRYABLE_CLIENT_STATUSES = frozenset({408, 429})
 RETRY_AFTER_MAX_SECONDS = 10.0
 # UX-DESC-01: category pages need an extra redirect and TLS handshake.
 DESCRIPTION_TIMEOUT_SECONDS = 12.0
+DESCRIPTION_CACHE_SECONDS = 300
+DESCRIPTION_CACHE_LIMIT = 256
 
 
 class KufarAPIError(Exception):
@@ -109,6 +112,8 @@ class KufarClient:
         # Limit parallel HTTP requests across all KufarClient users
         self._semaphore = asyncio.Semaphore(settings.kufar_parallel_semaphore)
         self._description_semaphore = asyncio.Semaphore(2)
+        self._description_cache: OrderedDict[int, tuple[float, str | None]] = OrderedDict()
+        self._description_tasks: dict[int, asyncio.Task[str | None]] = {}
         # Simple circuit breaker: after 5 consecutive errors open the
         # circuit for 30 seconds and fail fast with KufarUnavailableError
         # (RV-BE-05: it used to return an empty result instead).
@@ -160,8 +165,13 @@ class KufarClient:
         return self._http_client
 
     async def aclose(self) -> None:
+        self._closed = True
+        tasks = list(self._description_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._description_cache.clear()
         async with self._client_lock:
-            self._closed = True
             if self._owns_client and self._http_client is not None:
                 await self._http_client.aclose()
 
@@ -335,10 +345,12 @@ class KufarClient:
                 attempts += 1
                 retry_after: float | None = None
                 try:
-                    if not bypass_delay:
-                        await self._enforce_delay()
                     client = await self._get_client()
                     async with self._semaphore:
+                        # Space actual HTTP starts, including requests queued
+                        # behind slow responses, rather than semaphore arrivals.
+                        if not bypass_delay:
+                            await self._enforce_delay()
                         response = await client.get(
                             KUFAR_BASE_URL, params=params, headers=headers,
                         )
@@ -393,11 +405,38 @@ class KufarClient:
         ) from last_error
 
     async def get_listing_description(self, ad_id: int) -> str | None:
+        if self._closed:
+            raise RuntimeError("KufarClient is closed")
+        now = asyncio.get_running_loop().time()
+        cached = self._description_cache.get(ad_id)
+        if cached is not None and cached[0] > now:
+            self._description_cache.move_to_end(ad_id)
+            return cached[1]
+        # Hundreds of subscribers can receive the same ad across pump batches.
+        # Share one page download and keep only a bounded, short-lived result.
+        if ad_id not in self._description_tasks:
+            task = asyncio.create_task(self._fetch_description(ad_id))
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            self._description_tasks[ad_id] = task
+        return await asyncio.shield(self._description_tasks[ad_id])
+
+    async def _fetch_description(self, ad_id: int) -> str | None:
         # Separate the small page lookup from queued search pagination.
-        async with self._description_semaphore:
-            async with asyncio.timeout(DESCRIPTION_TIMEOUT_SECONDS):
-                client = await self._get_client()
-                return await fetch_listing_description(client, ad_id, user_agent=USER_AGENT)
+        try:
+            async with self._description_semaphore:
+                async with asyncio.timeout(DESCRIPTION_TIMEOUT_SECONDS):
+                    client = await self._get_client()
+                    description = await fetch_listing_description(
+                        client, ad_id, user_agent=USER_AGENT,
+                    )
+            ttl = DESCRIPTION_CACHE_SECONDS if description else 30
+            self._description_cache[ad_id] = (asyncio.get_running_loop().time() + ttl, description)
+            self._description_cache.move_to_end(ad_id)
+            while len(self._description_cache) > DESCRIPTION_CACHE_LIMIT:
+                self._description_cache.popitem(last=False)
+            return description
+        finally:
+            self._description_tasks.pop(ad_id, None)
 
     async def search_all_ads(
         self,

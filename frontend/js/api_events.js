@@ -776,6 +776,7 @@ function createApiEvents(context) {
                 if (state.trackers.pane === pane) return;
                 selectTrackingPane(pane);
                 if (pane === "events") void refreshTrackerEvents();
+                else void loadTrackers({ skipIfLoading: true });
             });
         }
 

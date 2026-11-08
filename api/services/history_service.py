@@ -7,7 +7,9 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -346,26 +348,59 @@ async def sync_query_listing_states(
     total_results: int,
 ) -> QuerySyncResult:
     stats = compute_price_stats(extract_prices(ads))
-    existing_by_id = await load_listing_states(session, query=query)
-    candidates = listing_candidates(ads)
-    # RV-SCH-01: a listing older than load_listing_states' recency window is
-    # still known — fetch it by id rather than re-inserting it, which hit the
-    # unique constraint and came back "new" with a stale price every sync.
-    outside_window = {int(ad["ad_id"]) for ad in candidates} - existing_by_id.keys()
-    if outside_window:
+    # Only the current page needs ORM objects; historical rows can number
+    # in the thousands and do not participate in its price comparison.
+    candidates = {}
+    for ad in listing_candidates(ads):
+        candidates.setdefault(int(ad["ad_id"]), ad)
+    existing_by_id: dict[int, QueryListingState] = {}
+    candidate_ids = list(candidates)
+    for start in range(0, len(candidate_ids), 500):
         known = await session.execute(
             select(QueryListingState).where(
                 QueryListingState.query == query,
-                QueryListingState.ad_id.in_(outside_window),
+                QueryListingState.ad_id.in_(candidate_ids[start:start + 500]),
             )
         )
         existing_by_id.update({row.ad_id: row for row in known.scalars()})
+
+    new_rows = []
+    for ad_id, ad in candidates.items():
+        if ad_id in existing_by_id:
+            continue
+        price = normalize_price_byn(ad.get("price_byn"), ad)
+        new_rows.append(dict(
+            query=query, ad_id=ad_id, title=str(ad.get("subject", "")),
+            link=str(ad.get("ad_link", "")), last_price_byn=price,
+            price_type="negotiable" if price is None else "free" if price == 0 else "fixed",
+            list_time=ad.get("list_time"), active=True,
+            first_seen_at=observed_at, last_seen_at=observed_at,
+        ))
+    insert_factory = sqlite_insert if session.get_bind().dialect.name == "sqlite" else pg_insert
+    inserted: dict[int, QueryListingState] = {}
+    # Keep below SQLite's legacy 999-bind limit as well as asyncpg's limit.
+    # ON CONFLICT preserves the concurrent-writer semantics without a
+    # SAVEPOINT + INSERT + RELEASE round trip for every new listing.
+    for start in range(0, len(new_rows), 50):
+        rows = await session.scalars(
+            insert_factory(QueryListingState).values(new_rows[start:start + 50])
+            .on_conflict_do_nothing(index_elements=["query", "ad_id"])
+            .returning(QueryListingState)
+        )
+        inserted.update({row.ad_id: row for row in rows})
+    existing_by_id.update(inserted)
+    raced_ids = candidates.keys() - existing_by_id.keys()
+    if raced_ids:
+        rows = await session.scalars(select(QueryListingState).where(
+            QueryListingState.query == query, QueryListingState.ad_id.in_(raced_ids),
+        ))
+        existing_by_id.update({row.ad_id: row for row in rows})
     seen_ids: set[int] = set()
     new_listings: list[QueryListingState] = []
     price_drops: list[tuple[QueryListingState, float]] = []
     listings: list[QueryListingState] = []
 
-    for ad in candidates:
+    for ad in candidates.values():
         ad_id = int(ad.get("ad_id", 0))
         if ad_id in seen_ids:
             # A repeated ad on the page carries nothing new.
@@ -386,44 +421,11 @@ async def sync_query_listing_states(
         link = str(ad.get("ad_link", ""))
         list_time = ad.get("list_time")
 
-        existing = existing_by_id.get(ad_id)
-        if existing is None:
-            created = QueryListingState(
-                query=query,
-                ad_id=ad_id,
-                title=title,
-                link=link,
-                last_price_byn=price_byn,
-                price_type=price_type,
-                list_time=list_time,
-                active=True,
-                first_seen_at=observed_at,
-                last_seen_at=observed_at,
-            )
-            try:
-                async with session.begin_nested():
-                    # RV2-BK-03 / BE-01: see the QuerySnapshot insert above.
-                    session.add(created)
-                    await session.flush()
-            except IntegrityError:
-                # begin_nested() already rolled back the savepoint —
-                # no session.rollback() needed (that would kill the outer tx).
-                existing = await session.scalar(
-                    select(QueryListingState).where(
-                        QueryListingState.query == query,
-                        QueryListingState.ad_id == ad_id,
-                    )
-                )
-                if existing is None:
-                    raise
-                # RV-SCH-01: a concurrent writer won the insert — refresh
-                # the row like any known listing below.
-                existing_by_id[ad_id] = existing
-            else:
-                existing_by_id[ad_id] = created
-                new_listings.append(created)
-                listings.append(created)
-                continue
+        existing = existing_by_id[ad_id]
+        if ad_id in inserted:
+            new_listings.append(existing)
+            listings.append(existing)
+            continue
 
         # BE-M11 / E-FIND-05: Decimal-exact drop with a noise floor, see
         # ``significant_price_drop``.
@@ -449,9 +451,14 @@ async def sync_query_listing_states(
         existing.active = True
         listings.append(existing)
 
-    for ad_id, state in existing_by_id.items():
-        if ad_id not in seen_ids:
-            state.active = False
+    missing = update(QueryListingState).where(
+        QueryListingState.query == query, QueryListingState.active.is_(True),
+    )
+    for start in range(0, len(candidate_ids), 500):
+        missing = missing.where(QueryListingState.ad_id.not_in(candidate_ids[start:start + 500]))
+    await session.execute(
+        missing.values(active=False).execution_options(synchronize_session="fetch")
+    )
 
     return QuerySyncResult(
         stats_count=stats.count,

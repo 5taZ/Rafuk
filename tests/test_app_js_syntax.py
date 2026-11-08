@@ -2396,6 +2396,74 @@ const api = createApiTrackers({
     _node_ok(harness)
 
 
+def test_tracker_polling_only_refreshes_visible_pane_and_backs_off_when_unchanged() -> None:
+    harness = _FAKE_DOM_JS + _js(
+        "dom_helpers.js", "app_core_dom.js", "app_core.js", "api_trackers.js",
+    ) + r"""
+const assert = require("node:assert/strict");
+const { state } = createAppCore();
+state.ui.activeView = "tracking";
+state.trackers.pane = "events";
+let now = 0;
+let interval = null;
+let pending = null;
+const calls = [];
+Date.now = () => now;
+globalThis.setInterval = (callback) => { interval = callback; return 1; };
+globalThis.clearInterval = () => { interval = null; };
+const api = createApiTrackers({
+    state, elements: {}, hasTelegramInitData: () => true,
+    renderTrackerEvents() {}, renderTrackers() {},
+    getJson(url) {
+        calls.push(url);
+        return pending || Promise.resolve([]);
+    },
+});
+const run = async (at) => {
+    now = at;
+    interval();
+    await Promise.resolve();
+    await Promise.resolve();
+};
+(async () => {
+    api.startTrackerRefresh();
+    await run(30_000);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].includes("tracker-events"));
+    await run(60_000);
+    assert.equal(calls.length, 1);
+    await run(90_000);
+    assert.equal(calls.length, 2);
+    await run(120_000);
+    await run(180_000);
+    assert.equal(calls.length, 2);
+    await run(210_000);
+    assert.equal(calls.length, 3);
+    document.hidden = true;
+    await run(400_000);
+    assert.equal(calls.length, 3);
+    document.hidden = false;
+    state.trackers.pane = "trackers";
+    let resolve;
+    pending = new Promise(done => { resolve = done; });
+    await run(430_000);
+    await run(460_000);
+    assert.equal(calls.length, 4, "slow requests cannot overlap");
+    assert.equal(calls[3], "/api/v1/trackers");
+    resolve([{id: 1, event_count: 4, avg_events_per_day: 1}]);
+    await Promise.resolve();
+    pending = Promise.resolve([{id: 1, event_count: 4, avg_events_per_day: 0.99}]);
+    await run(490_000);
+    await run(520_000);
+    assert.equal(calls.length, 5, "time-derived averages do not defeat backoff");
+    await run(550_000);
+    assert.equal(calls.length, 6);
+    api.stopTrackerRefresh();
+    assert.equal(interval, null);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
 def test_toasts_are_minimal_and_fast() -> None:
     render_core = (JS_DIR / "render_core.js").read_text(encoding="utf-8")
     css = _read_all_css()

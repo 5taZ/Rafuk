@@ -26,6 +26,9 @@ runs analytics and AI-assisted decisioning over them, and surfaces
 * **Mini App** (vanilla JS, no bundler) shows charts, listing cards,
   watchlist filters, and the deal pipeline.
 
+Autotracker processing, capacity limits and reproducible synthetic load
+checks are described in [docs/TRACKER_SCALING.md](docs/TRACKER_SCALING.md).
+
 ## Architecture
 
 | Component | Folder | Notes |

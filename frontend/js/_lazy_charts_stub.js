@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261108-tracker-limits";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261108-tracker-scaling";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");
