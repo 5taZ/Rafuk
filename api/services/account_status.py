@@ -6,14 +6,15 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import Settings
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import AccountStatus, User
+from api.models import AccountStatus, Tracker, User
 from api.schemas import (
+    AccountLimitRead,
     ProfileLimitsRead,
     ProfilePermissionsRead,
     ProfileRead,
@@ -22,9 +23,11 @@ from api.schemas import (
     QuotaBucketRead,
 )
 from api.services.account_erasure import ensure_user_creation_allowed
+from api.services.ai_quota import ai_quota_snapshot
 from api.services.cache import CacheBackend
 
 BARE_SEARCH_STATUS_CODE = "bare_search"
+LEGACY_STATUS_CODES = {"shark": "market_maker"}
 QUOTA_BUCKET_AI = "ai"
 QUOTA_BUCKET_ASSISTANT = "assistant"
 QUOTA_BUCKETS = (QUOTA_BUCKET_AI, QUOTA_BUCKET_ASSISTANT)
@@ -189,10 +192,11 @@ async def get_status_by_code(
     session: AsyncSession,
     code: str | None,
 ) -> AccountStatus:
+    code = LEGACY_STATUS_CODES.get(code, code)
     status = None
     if code:
         status = await session.get(AccountStatus, code)
-    if status is None and code != BARE_SEARCH_STATUS_CODE:
+    if (status is None or not status.is_active) and code != BARE_SEARCH_STATUS_CODE:
         status = await session.get(AccountStatus, BARE_SEARCH_STATUS_CODE)
     if status is None:
         raise RuntimeError("account_statuses seed is missing bare_search")
@@ -277,22 +281,7 @@ async def build_profile(
     user = await get_or_create_profile_user(session, telegram_user)
     status = await get_effective_status(session, user, now)
     granted_at, expires_at = effective_status_metadata(user, status)
-    limits = ProfileLimitsRead(
-        ai=await quota_snapshot(
-            cache,
-            bucket=QUOTA_BUCKET_AI,
-            telegram_user_id=user.telegram_user_id,
-            limit=status.ai_daily_limit,
-            now=now,
-        ),
-        assistant=await quota_snapshot(
-            cache,
-            bucket=QUOTA_BUCKET_ASSISTANT,
-            telegram_user_id=user.telegram_user_id,
-            limit=status.assistant_daily_limit,
-            now=now,
-        ),
-    )
+    limits = await build_profile_limits(session, cache, user, status, now=now)
     return ProfileRead(
         user=ProfileUserRead.model_validate(user),
         status=ProfileStatusRead(
@@ -305,9 +294,36 @@ async def build_profile(
         ),
         limits=limits,
         permissions=ProfilePermissionsRead(
-            can_use_ai=status.ai_daily_limit > 0,
-            can_use_assistant=status.assistant_daily_limit > 0,
+            can_use_ai=status.code != BARE_SEARCH_STATUS_CODE and status.ai_5h_limit > 0
+            and status.ai_weekly_limit > 0,
+            can_use_assistant=status.code != BARE_SEARCH_STATUS_CODE and status.ai_5h_limit > 0
+            and status.ai_weekly_limit > 0,
             is_admin=is_admin_user(user.telegram_user_id, settings),
+        ),
+    )
+
+
+async def build_profile_limits(
+    session: AsyncSession, cache: CacheBackend, user: User, status: AccountStatus,
+    *, now: datetime | None = None, tracker_used: int | None = None,
+) -> ProfileLimitsRead:
+    quota = await ai_quota_snapshot(
+        cache, telegram_user_id=user.telegram_user_id,
+        short_limit=status.ai_5h_limit if status.code != BARE_SEARCH_STATUS_CODE else 0,
+        weekly_limit=status.ai_weekly_limit if status.code != BARE_SEARCH_STATUS_CODE else 0,
+        now=now,
+    )
+    if tracker_used is None:
+        tracker_used = await session.scalar(select(func.count(Tracker.id)).where(
+            Tracker.user_id == user.id, Tracker.active.is_(True), Tracker.paused.is_(False),
+        )) or 0
+    return ProfileLimitsRead(
+        # Older Mini App clients read these keys; both now use the shared AI budget.
+        ai=quota.five_hour, assistant=quota.five_hour,
+        ai_5h=quota.five_hour, ai_weekly=quota.weekly,
+        trackers=AccountLimitRead(
+            used=tracker_used, limit=status.max_trackers,
+            remaining=max(0, status.max_trackers - tracker_used),
         ),
     )
 
@@ -316,7 +332,7 @@ def effective_status_metadata(
     user: User,
     status: AccountStatus,
 ) -> tuple[datetime | None, datetime | None]:
-    if status.code != user.account_status_code:
+    if status.code != LEGACY_STATUS_CODES.get(user.account_status_code, user.account_status_code):
         return None, None
     return user.status_granted_at, user.status_expires_at
 

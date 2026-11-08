@@ -17,6 +17,7 @@ import asyncio
 import json
 import threading
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -35,6 +36,7 @@ from api.services.account_status import (
     refund_quota,
 )
 from api.services.ai_guards import QuotaCharge
+from api.services.ai_quota import ai_quota_key
 from api.services.ai_task_store import (
     _claim_inflight,
     _get_task,
@@ -114,6 +116,15 @@ class SharedRedisLikeCache:
     async def delete(self, key: str) -> None:
         with self._mutex:
             self._data.pop(key, None)
+
+    async def rolling_quota(self, key: str, **kwargs):
+        # The two app loops share one atomic store, as production workers do.
+        with self._mutex:
+            cache = MemoryCache()
+            cache._storage = OrderedDict(self._data)
+            result = await cache.rolling_quota(key, **kwargs)
+            self._data = dict(cache._storage)
+            return result
 
     async def try_acquire_lock(self, key: str, token: str, *, ttl_seconds: int) -> bool:
         with self._mutex:
@@ -271,11 +282,19 @@ def _claims_left_after_release(keys, timeout_s: float = 5.0) -> list[str]:
 
 
 def _quota_used(cache, telegram_user_id: int) -> str | None:
+    key = ai_quota_key(telegram_user_id)
+    if isinstance(cache, MemoryCache):
+        entry = cache._storage.get(key)
+        raw = entry[0] if entry else None
+    else:
+        raw = cache.raw(key)
+    if raw is not None:
+        return str(len(json.loads(raw)))
     key = quota_key(QUOTA_BUCKET_AI, telegram_user_id)
     if isinstance(cache, MemoryCache):
         entry = cache._storage.get(key)
-        return entry[0] if entry else None
-    return cache.raw(key)
+        return entry[0] if entry else "0"
+    return cache.raw(key) or "0"
 
 
 # ── Endpoint behaviour ────────────────────────────────────────────────
@@ -409,14 +428,16 @@ def test_quota_rejection_releases_claim(monkeypatch) -> None:
     with TestClient(_app_for_user(telegram_user_id)) as client:
         cache = MemoryCache()
         client.app.state.cache = cache
-        cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)] = ("10", 0.0)
+        cache._storage[ai_quota_key(telegram_user_id)] = (
+            json.dumps({f"used-{i}": datetime.now(UTC).timestamp() for i in range(20)}), 0.0,
+        )
         resp = client.post("/api/v1/ai/analyze", json=PAYLOAD)
 
     assert resp.status_code == 429
     assert not _claims_left_after_release(
         lambda: [key for key in cache._storage if key.startswith("ai_inflight:")]
     )
-    assert _quota_used(cache, telegram_user_id) == "10"
+    assert _quota_used(cache, telegram_user_id) == "20"
     assert ai.calls == 0
 
 

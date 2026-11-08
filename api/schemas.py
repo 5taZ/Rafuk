@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.services.listing_filters import canonical_condition_filter
 from api.services.reseller_tools import canonical_seller_type_filter
@@ -758,6 +758,8 @@ class AccountStatusRead(BaseModel):
     ai_daily_limit: int
     assistant_daily_limit: int
     max_trackers: int
+    ai_5h_limit: int
+    ai_weekly_limit: int
     updated_at: datetime
 
 
@@ -765,7 +767,19 @@ class QuotaBucketRead(BaseModel):
     used: int = Field(ge=0)
     limit: int = Field(ge=0)
     remaining: int = Field(ge=0)
-    resets_at: datetime
+    resets_at: datetime | None
+    available: bool = True
+
+
+class AccountLimitRead(BaseModel):
+    used: int = Field(ge=0)
+    limit: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+
+
+class AIQuotaRead(BaseModel):
+    five_hour: QuotaBucketRead
+    weekly: QuotaBucketRead
 
 
 class ProfileUserRead(BaseModel):
@@ -790,6 +804,9 @@ class ProfileStatusRead(BaseModel):
 class ProfileLimitsRead(BaseModel):
     ai: QuotaBucketRead
     assistant: QuotaBucketRead
+    ai_5h: QuotaBucketRead
+    ai_weekly: QuotaBucketRead
+    trackers: AccountLimitRead
 
 
 class ProfilePermissionsRead(BaseModel):
@@ -827,9 +844,17 @@ class AdminUserStatusUpdate(BaseModel):
 class AdminStatusLimitUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ai_daily_limit: int = Field(ge=0, le=10_000, strict=True)
-    assistant_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+    ai_daily_limit: int | None = Field(default=None, ge=0, le=10_000, strict=True)
+    assistant_daily_limit: int | None = Field(default=None, ge=0, le=10_000, strict=True)
+    ai_5h_limit: int | None = Field(default=None, ge=0, le=10_000, strict=True)
+    ai_weekly_limit: int | None = Field(default=None, ge=0, le=100_000, strict=True)
     max_trackers: int | None = Field(default=None, ge=0, le=10_000, strict=True)
+
+    @model_validator(mode="after")
+    def require_limit(self):
+        if not any(getattr(self, name) is not None for name in type(self).model_fields):
+            raise ValueError("Укажите хотя бы один лимит")
+        return self
 
 
 class AdminAuditRead(BaseModel):

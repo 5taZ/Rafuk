@@ -39,6 +39,8 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "ai_daily_limit": 0,
         "assistant_daily_limit": 0,
         "max_trackers": 3,
+        "ai_5h_limit": 0,
+        "ai_weekly_limit": 0,
     },
     {
         "code": "scout",
@@ -49,36 +51,45 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "ai_daily_limit": 10,
         "assistant_daily_limit": 3,
         "max_trackers": 10,
+        "ai_5h_limit": 20,
+        "ai_weekly_limit": 100,
     },
     {
         "code": "flipper",
-        "display_name": "Pro Max",
+        "display_name": "Max",
         "tagline": "регулярный поиск выгодных лотов",
         "accent": "violet",
         "sort_order": 30,
         "ai_daily_limit": 40,
         "assistant_daily_limit": 12,
         "max_trackers": 10,
+        "ai_5h_limit": 60,
+        "ai_weekly_limit": 350,
     },
     {
         "code": "shark",
-        "display_name": "Pro Max Ultra",
+        "display_name": "Ultra",
         "tagline": "активный ресейл / постоянные сделки",
         "accent": "amber",
         "sort_order": 40,
         "ai_daily_limit": 120,
         "assistant_daily_limit": 35,
         "max_trackers": 10,
+        "ai_5h_limit": 150,
+        "ai_weekly_limit": 1000,
+        "is_active": False,
     },
     {
         "code": "market_maker",
-        "display_name": "Pro Max Ultra Max",
+        "display_name": "Ultra",
         "tagline": "почти “god mode”, высокий лимит",
         "accent": "red",
         "sort_order": 50,
         "ai_daily_limit": 300,
         "assistant_daily_limit": 100,
         "max_trackers": 10,
+        "ai_5h_limit": 150,
+        "ai_weekly_limit": 1000,
     },
 )
 
@@ -99,6 +110,15 @@ class AccountStatus(Base):
     )
     max_trackers: Mapped[int] = mapped_column(
         Integer, nullable=False, default=10, server_default="10",
+    )
+    ai_5h_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    ai_weekly_limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -122,6 +142,11 @@ class AccountStatus(Base):
             "max_trackers >= 0 AND max_trackers <= 10000",
             name="chk_account_statuses_max_trackers_bounds",
         ),
+        CheckConstraint(
+            "ai_5h_limit >= 0 AND ai_5h_limit <= 10000 "
+            "AND ai_weekly_limit >= 0 AND ai_weekly_limit <= 100000",
+            name="chk_account_statuses_ai_window_limit_bounds",
+        ),
         Index("idx_account_statuses_sort_order", "sort_order"),
     )
 
@@ -130,7 +155,7 @@ class AccountStatus(Base):
 def _seed_account_statuses(_target, connection, **_kw) -> None:
     connection.execute(
         AccountStatus.__table__.insert(),
-        [dict(row) for row in ACCOUNT_STATUS_SEED_ROWS],
+        [{"is_active": True, **row} for row in ACCOUNT_STATUS_SEED_ROWS],
     )
 
 

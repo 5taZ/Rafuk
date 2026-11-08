@@ -14,6 +14,10 @@ from redis.exceptions import RedisError
 logger = logging.getLogger(__name__)
 
 
+class QuotaStoreUnavailableError(RuntimeError):
+    pass
+
+
 def digest_cache_key(prefix: str, payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return f"{prefix}:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
@@ -31,6 +35,10 @@ class CacheBackend(Protocol):
     async def set_if_absent(self, key: str, value: str, ttl: int) -> bool: ...
     async def delete(self, key: str) -> None: ...
     async def ping(self) -> bool: ...
+    async def rolling_quota(
+        self, key: str, *, now: float, short_limit: int, weekly_limit: int,
+        request_id: str = "", refund_id: str = "",
+    ) -> tuple[int, int, float, float, bool]: ...
 
     # PERF-NEW-4: batched pipeline ops
     async def pipeline_get(self, keys: list[str]) -> list[str | None]: ...
@@ -173,6 +181,43 @@ class MemoryCache:
                 self._storage.popitem(last=False)
             return True
 
+    async def rolling_quota(
+        self, key: str, *, now: float, short_limit: int, weekly_limit: int,
+        request_id: str = "", refund_id: str = "",
+    ) -> tuple[int, int, float, float, bool]:
+        async with self._lock:
+            entry = self._storage.get(key)
+            events = json.loads(entry[0]) if entry and (
+                not entry[1] or entry[1] > time.monotonic()
+            ) else {}
+            events = {token: at for token, at in events.items() if at > now - 604800}
+            if refund_id:
+                events.pop(refund_id, None)
+            short_used = sum(at > now - 18000 for at in events.values())
+            accepted = not request_id or request_id in events or (
+                short_used < short_limit and len(events) < weekly_limit
+            )
+            if request_id and accepted:
+                events.setdefault(request_id, now)
+            if events:
+                expires = time.monotonic() + 604860 if request_id and accepted else (
+                    entry[1] if entry else time.monotonic() + 604860
+                )
+                self._storage[key] = (json.dumps(events), expires)
+                self._storage.move_to_end(key)
+                while len(self._storage) > self.MAX_ENTRIES:
+                    self._storage.popitem(last=False)
+            else:
+                self._storage.pop(key, None)
+            short = sorted(at for at in events.values() if at > now - 18000)
+            weekly = sorted(events.values())
+            short_index = min(len(short) - 1, max(0, len(short) - short_limit))
+            week_index = min(len(weekly) - 1, max(0, len(weekly) - weekly_limit))
+            return (
+                len(short), len(events), short[short_index] + 18000 if short else 0,
+                weekly[week_index] + 604800 if weekly else 0, accepted,
+            )
+
     async def delete(self, key: str) -> None:
         """Remove a key from the cache. No-op if the key does not exist."""
         async with self._lock:
@@ -302,6 +347,53 @@ class RedisCache:
         "end "
         "return 0"
     )
+    # Both windows reserve the same request atomically; rejected work and
+    # retries cannot consume one window without the other.
+    _ROLLING_QUOTA_LUA = """
+        local now = tonumber(ARGV[1])
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - 604800)
+        if ARGV[5] ~= '' then redis.call('ZREM', KEYS[1], ARGV[5]) end
+        local lower = '(' .. tostring(now - 18000)
+        local short = redis.call('ZCOUNT', KEYS[1], lower, '+inf')
+        local weekly = redis.call('ZCARD', KEYS[1])
+        local accepted = 1
+        if ARGV[4] ~= '' then
+            local existing = redis.call('ZSCORE', KEYS[1], ARGV[4])
+            if not existing and (short >= tonumber(ARGV[2]) or weekly >= tonumber(ARGV[3])) then
+                accepted = 0
+            else
+                redis.call('ZADD', KEYS[1], 'NX', now, ARGV[4])
+                redis.call('EXPIRE', KEYS[1], 604860)
+            end
+        end
+        short = redis.call('ZCOUNT', KEYS[1], lower, '+inf')
+        weekly = redis.call('ZCARD', KEYS[1])
+        local short_skip = math.min(math.max(0, short - tonumber(ARGV[2])), math.max(0, short - 1))
+        local week_skip = math.min(math.max(0, weekly - tonumber(ARGV[3])),
+                                   math.max(0, weekly - 1))
+        local short_first = redis.call('ZRANGEBYSCORE', KEYS[1], lower, '+inf',
+                                      'WITHSCORES', 'LIMIT', short_skip, 1)
+        local week_first = redis.call('ZRANGE', KEYS[1], week_skip, week_skip, 'WITHSCORES')
+        local short_reset = 0
+        local week_reset = 0
+        if #short_first > 0 then short_reset = (tonumber(short_first[2]) + 18000) * 1000 end
+        if #week_first > 0 then week_reset = (tonumber(week_first[2]) + 604800) * 1000 end
+        return {short, weekly, math.floor(short_reset), math.floor(week_reset), accepted}
+    """
+
+    async def rolling_quota(
+        self, key: str, *, now: float, short_limit: int, weekly_limit: int,
+        request_id: str = "", refund_id: str = "",
+    ) -> tuple[int, int, float, float, bool]:
+        try:
+            short, weekly, short_reset, week_reset, accepted = await self._client.eval(
+                self._ROLLING_QUOTA_LUA, 1, key, str(now), short_limit, weekly_limit,
+                request_id, refund_id,
+            )
+            return int(short), int(weekly), short_reset / 1000, week_reset / 1000, bool(accepted)
+        except RedisError as exc:
+            logger.warning("Redis rolling quota unavailable", exc_info=True)
+            raise QuotaStoreUnavailableError from exc
 
     async def incr(self, key: str, ttl: int | None = None) -> int:
         """Atomically increment a counter and apply TTL on first set.

@@ -37,25 +37,24 @@ import re as _re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from api.config import get_settings
-from api.models import User, UserConsent
+from api.models import AccountStatus, User, UserConsent
 from api.services.account_erasure import ensure_user_creation_allowed
 from api.services.account_status import (
     BARE_SEARCH_STATUS_CODE,
     QUOTA_BUCKET_AI,
     QUOTA_BUCKET_ASSISTANT,
-    _quota_error_message,
-    consume_quota,
     get_effective_status,
     get_status_by_code,
-    quota_snapshot,
     refund_quota,
 )
+from api.services.ai_quota import consume_ai_quota, refund_ai_quota
 from api.services.cache import CacheBackend
 from api.services.consent_policy import CURRENT_POLICY_VERSION
 from api.services.workflow_store import resolve_user_id
@@ -71,6 +70,7 @@ class QuotaCharge:
     bucket: str
     telegram_user_id: int
     charged_at: datetime
+    request_id: str | None = None
 
 
 def _check_ai_available():
@@ -98,12 +98,12 @@ async def _check_rate_limit(
     *,
     endpoint: str = "default",
 ) -> QuotaCharge:
-    """Consume one status-based AI quota unit for this endpoint.
+    """Reserve one request in the shared five-hour and seven-day AI budget.
 
     The public signature stays compatible with the old per-endpoint
     limiter so sibling routers and tests can keep monkeypatching it.
-    ``listing``/``listing_assistant`` spend from the assistant bucket;
-    buyer-facing AI endpoints spend from the shared AI bucket.
+    Analysis and the seller assistant share both windows. Cache hits and
+    inflight joins bypass this reservation in the endpoint handlers.
 
     RV-AI-07: returns the charge so a request that ends up delivering
     nothing can hand it back via ``_refund_quota``. Monkeypatched
@@ -113,22 +113,31 @@ async def _check_rate_limit(
 
     cache = _aa.get_cache(request)
     bucket = _quota_bucket_for_endpoint(endpoint)
-    limit = await _status_quota_limit(request, user_id, bucket=bucket)
+    short_limit, weekly_limit = await _status_quota_limits(request, user_id)
     charged_at = datetime.now(UTC)
-    await consume_quota(
+    request_id = uuid4().hex
+    await consume_ai_quota(
         cache,
-        bucket=bucket,
         telegram_user_id=user_id,
-        limit=limit,
+        short_limit=short_limit, weekly_limit=weekly_limit, request_id=request_id,
         now=charged_at,
     )
-    return QuotaCharge(bucket=bucket, telegram_user_id=int(user_id), charged_at=charged_at)
+    return QuotaCharge(
+        bucket=bucket, telegram_user_id=int(user_id), charged_at=charged_at,
+        request_id=request_id,
+    )
 
 
 async def _refund_quota(cache: CacheBackend, charge: QuotaCharge | None) -> None:
     """RV-AI-07: return a unit spent by ``_check_rate_limit``."""
     if charge is None:
         return
+    if charge.request_id is not None:
+        await refund_ai_quota(
+            cache, telegram_user_id=charge.telegram_user_id, request_id=charge.request_id,
+        )
+        return
+    # RV-AI-07: old in-flight task fixtures/importers still carry a daily charge.
     await refund_quota(
         cache,
         bucket=charge.bucket,
@@ -143,27 +152,19 @@ async def _check_ai_entitlement(
     *,
     endpoint: str = "default",
 ) -> None:
-    from api.routers import ai_analysis as _aa  # late, preserves test patch
-
     bucket = _quota_bucket_for_endpoint(endpoint)
-    limit = await _status_quota_limit(request, user_id, bucket=bucket)
-    if limit > 0:
+    short_limit, weekly_limit = await _status_quota_limits(request, user_id)
+    if short_limit > 0 and weekly_limit > 0:
         return
-    snapshot = await quota_snapshot(
-        _aa.get_cache(request),
-        bucket=bucket,
-        telegram_user_id=user_id,
-        limit=limit,
-    )
     raise HTTPException(
         status_code=403,
         detail={
             "error": "premium_required",
             "bucket": bucket,
-            "used": snapshot.used,
-            "limit": snapshot.limit,
-            "resets_at": snapshot.resets_at.isoformat(),
-            "message": _quota_error_message(bucket, premium_required=True),
+            "used": 0,
+            "limit": 0,
+            "resets_at": None,
+            "message": "AI доступен на тарифах Pro, Max и Ultra.",
         },
     )
 
@@ -173,7 +174,7 @@ def _quota_bucket_for_endpoint(endpoint: str) -> str:
     return QUOTA_BUCKET_ASSISTANT if normalized in _ASSISTANT_QUOTA_ENDPOINTS else QUOTA_BUCKET_AI
 
 
-async def _status_quota_limit(request: Request, user_id: int, *, bucket: str) -> int:
+async def _status_quota_status(request: Request, user_id: int) -> AccountStatus:
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
         user = (
@@ -201,9 +202,20 @@ async def _status_quota_limit(request: Request, user_id: int, *, bucket: str) ->
             if user is not None
             else await get_status_by_code(session, BARE_SEARCH_STATUS_CODE)
         )
-    if bucket == QUOTA_BUCKET_ASSISTANT:
-        return int(status.assistant_daily_limit)
-    return int(status.ai_daily_limit)
+    return status
+
+
+async def _status_quota_limits(request: Request, user_id: int) -> tuple[int, int]:
+    status = await _status_quota_status(request, user_id)
+    if status.code == BARE_SEARCH_STATUS_CODE:
+        return 0, 0
+    return int(status.ai_5h_limit), int(status.ai_weekly_limit)
+
+
+async def _status_quota_limit(request: Request, user_id: int, *, bucket: str) -> int:
+    """Legacy import used by erasure tests; runtime checks use both windows."""
+    del bucket
+    return (await _status_quota_limits(request, user_id))[0]
 
 
 async def _check_ai_consent(request: Request, user_id: int) -> None:

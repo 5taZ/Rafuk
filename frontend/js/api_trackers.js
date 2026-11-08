@@ -382,7 +382,7 @@ function createApiTrackers(context) {
                 },
             } : undefined);
             showToast(successMessage, "success");
-            await loadTrackers();
+            await Promise.all([loadTrackers(), context.loadProfile?.({ silent: true })]);
         }
     }
 

@@ -73,6 +73,7 @@ async def test_profile_me_creates_new_user_with_bare_search(profile_client) -> N
         "limit": 0,
         "remaining": 0,
         "resets_at": data["limits"]["ai"]["resets_at"],
+        "available": True,
     }
     assert data["permissions"] == {
         "can_use_ai": False,
@@ -277,6 +278,62 @@ async def test_profile_me_throttles_last_seen_at(profile_client) -> None:
         second_seen = user.last_seen_at
 
     assert first_seen == second_seen
+
+
+async def test_profile_counts_only_running_trackers_and_shows_capacity(profile_client) -> None:
+    from api.models import Tracker
+
+    client, factory, _cache = profile_client
+    await client.get("/api/v1/profile/me")
+    async with factory() as session:
+        user = await session.scalar(select(User).where(User.telegram_user_id == _PROFILE_USER_ID))
+        session.add_all([
+            Tracker(user_id=user.id, query="running one"),
+            Tracker(user_id=user.id, query="running two"),
+            Tracker(user_id=user.id, query="paused", paused=True),
+            Tracker(user_id=user.id, query="deleted", active=False),
+        ])
+        await session.commit()
+    profile = (await client.get("/api/v1/profile/me")).json()
+    assert profile["limits"]["trackers"] == {"used": 2, "limit": 3, "remaining": 1}
+    assert profile["limits"]["ai_5h"]["limit"] == 0
+    assert profile["limits"]["ai_weekly"]["limit"] == 0
+    assert profile["permissions"]["can_use_ai"] is False
+
+
+@pytest.mark.parametrize(
+    ("code", "name", "short", "weekly"),
+    [
+        ("scout", "Pro", 20, 100), ("flipper", "Max", 60, 350),
+        ("market_maker", "Ultra", 150, 1000), ("shark", "Ultra", 150, 1000),
+    ],
+)
+async def test_paid_profile_uses_shared_windows_and_preserves_subscription(
+    profile_client, code: str, name: str, short: int, weekly: int,
+) -> None:
+    from api.services.ai_quota import consume_ai_quota
+
+    client, factory, cache = profile_client
+    expires = datetime.now(UTC) + timedelta(days=30)
+    async with factory() as session:
+        session.add(User(
+            telegram_user_id=_PROFILE_USER_ID, first_name="Paid",
+            account_status_code=code, status_expires_at=expires,
+        ))
+        await session.commit()
+    await consume_ai_quota(
+        cache, telegram_user_id=_PROFILE_USER_ID, short_limit=short,
+        weekly_limit=weekly, request_id="profile-charge",
+    )
+    profile = (await client.get("/api/v1/profile/me")).json()
+    assert profile["status"]["display_name"] == name
+    assert profile["status"]["expires_at"] is not None
+    assert profile["limits"]["ai_5h"]["used"] == 1
+    assert profile["limits"]["ai_5h"]["limit"] == short
+    assert profile["limits"]["ai_weekly"]["used"] == 1
+    assert profile["limits"]["ai_weekly"]["limit"] == weekly
+    assert profile["limits"]["trackers"]["limit"] == 10
+    assert profile["permissions"]["can_use_assistant"] is True
 
 
 @pytest.mark.asyncio

@@ -167,7 +167,7 @@ function createAppActions(baseContext) {
     function openProfile(options = {}) {
         setActiveView("profile");
         void loadConsentSettings();
-        if (options.refresh || (!state.profile.data && !state.profile.loading)) {
+        if (options.refresh || !state.profile.loading) {
             void context.loadProfile?.({ silent: true });
         }
     }
@@ -293,10 +293,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261108-tracker-scaling"),
-                context._loadScript("js/api_ai_render.js?v=20261108-tracker-scaling"),
-                context._loadScript("js/api_ai.js?v=20261108-tracker-scaling"),
-                context._loadScript("js/api_listing_assistant.js?v=20261108-tracker-scaling"),
+                context._loadScript("js/api_ai_modal.js?v=20261108-rolling-ai"),
+                context._loadScript("js/api_ai_render.js?v=20261108-rolling-ai"),
+                context._loadScript("js/api_ai.js?v=20261108-rolling-ai"),
+                context._loadScript("js/api_listing_assistant.js?v=20261108-rolling-ai"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {

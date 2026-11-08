@@ -15,24 +15,23 @@ from api.dependencies import (
 )
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import AccountStatus, AdminAuditLog, User
+from api.models import AccountStatus, AdminAuditLog, Tracker, User
 from api.schemas import (
     AccountStatusRead,
     AdminAuditRead,
     AdminStatusLimitUpdate,
     AdminUserRead,
     AdminUserStatusUpdate,
-    ProfileLimitsRead,
     ProfileStatusRead,
 )
 from api.services.account_status import (
     BARE_SEARCH_STATUS_CODE,
-    QUOTA_BUCKET_AI,
-    QUOTA_BUCKET_ASSISTANT,
+    LEGACY_STATUS_CODES,
+    build_profile_limits,
     effective_status_metadata,
     get_effective_status,
     get_or_create_profile_user,
-    quota_snapshot,
+    get_status_by_code,
 )
 from api.services.cache import CacheBackend
 from api.services.client_ip import get_client_ip
@@ -75,7 +74,7 @@ async def list_admin_users(
             if needle.isdigit():
                 conditions.append(cast(User.telegram_user_id, String).like(f"%{needle}%"))
             stmt = stmt.where(or_(*conditions))
-        status_code = status.strip()
+        status_code = LEGACY_STATUS_CODES.get(status.strip(), status.strip())
         if status_code:
             now = datetime.now(UTC)
             if status_code == BARE_SEARCH_STATUS_CODE:
@@ -87,14 +86,23 @@ async def list_admin_users(
                 )
             else:
                 stmt = stmt.where(
-                    User.account_status_code == status_code,
+                    User.account_status_code.in_(
+                        [status_code, "shark"] if status_code == "market_maker" else [status_code]
+                    ),
                     or_(User.status_expires_at.is_(None), User.status_expires_at > now),
                 )
         users = (await session.execute(stmt)).scalars().unique().all()
+        tracker_counts = dict((await session.execute(
+            select(Tracker.user_id, func.count(Tracker.id)).where(
+                Tracker.user_id.in_([user.id for user in users]),
+                Tracker.active.is_(True), Tracker.paused.is_(False),
+            ).group_by(Tracker.user_id)
+        )).all())
         # PERF-NEW-3: parallelize quota_snapshot fan-out so /admin/users is
         # O(1) DB roundtrip + concurrent Redis GETs instead of N+1 sequential.
         return list(await asyncio.gather(*(
-            _admin_user_read(session, cache, user) for user in users
+            _admin_user_read(session, cache, user, tracker_used=tracker_counts.get(user.id, 0))
+            for user in users
         )))
 
 
@@ -115,8 +123,10 @@ async def update_admin_user_status(
         ).scalar_one_or_none()
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        status = await session.get(AccountStatus, payload.status_code)
-        if status is None:
+        status = await session.get(
+            AccountStatus, LEGACY_STATUS_CODES.get(payload.status_code, payload.status_code),
+        )
+        if status is None or not status.is_active:
             raise HTTPException(status_code=404, detail="Account status not found")
 
         old = _user_status_payload(target)
@@ -152,7 +162,9 @@ async def list_admin_statuses(
     del request, _admin
     async with session_factory() as session:
         return (
-            await session.execute(select(AccountStatus).order_by(AccountStatus.sort_order))
+            await session.execute(select(AccountStatus).where(
+                AccountStatus.is_active.is_(True),
+            ).order_by(AccountStatus.sort_order))
         ).scalars().all()
 
 
@@ -167,12 +179,28 @@ async def update_admin_status_limits(
 ) -> AccountStatus:
     async with session_factory() as session:
         actor = await get_or_create_profile_user(session, admin_user)
-        status = await session.get(AccountStatus, code)
-        if status is None:
+        status = await session.get(AccountStatus, LEGACY_STATUS_CODES.get(code, code))
+        if status is None or not status.is_active:
             raise HTTPException(status_code=404, detail="Account status not found")
         old = _status_limit_payload(status)
-        status.ai_daily_limit = payload.ai_daily_limit
-        status.assistant_daily_limit = payload.assistant_daily_limit
+        short_limit = payload.ai_5h_limit if (
+            payload.ai_5h_limit is not None
+        ) else status.ai_5h_limit
+        weekly_limit = payload.ai_weekly_limit if (
+            payload.ai_weekly_limit is not None
+        ) else status.ai_weekly_limit
+        if status.code == BARE_SEARCH_STATUS_CODE and (short_limit or weekly_limit):
+            raise HTTPException(status_code=422, detail="На тарифе Free AI недоступен.")
+        if bool(short_limit) != bool(weekly_limit) or weekly_limit < short_limit:
+            raise HTTPException(
+                status_code=422,
+                detail="Оба AI-лимита должны быть положительными или нулевыми. "
+                "Недельный лимит не может быть меньше лимита за 5 часов.",
+            )
+        for name in ("ai_daily_limit", "assistant_daily_limit", "ai_5h_limit", "ai_weekly_limit"):
+            value = getattr(payload, name)
+            if value is not None:
+                setattr(status, name, value)
         if payload.max_trackers is not None:
             status.max_trackers = payload.max_trackers
             await pause_excess_trackers(session)
@@ -235,6 +263,7 @@ async def _admin_user_read(
     user: User,
     *,
     status: AccountStatus | None = None,
+    tracker_used: int | None = None,
 ) -> AdminUserRead:
     if status is not None:
         current_status = status
@@ -252,6 +281,8 @@ async def _admin_user_read(
             current_status = user.account_status
     else:
         current_status = await get_effective_status(session, user)
+    if not current_status.is_active:
+        current_status = await get_status_by_code(session, current_status.code)
     granted_at, expires_at = effective_status_metadata(user, current_status)
     return AdminUserRead(
         telegram_user_id=user.telegram_user_id,
@@ -267,19 +298,8 @@ async def _admin_user_read(
             granted_at=granted_at,
             expires_at=expires_at,
         ),
-        limits=ProfileLimitsRead(
-            ai=await quota_snapshot(
-                cache,
-                bucket=QUOTA_BUCKET_AI,
-                telegram_user_id=user.telegram_user_id,
-                limit=current_status.ai_daily_limit,
-            ),
-            assistant=await quota_snapshot(
-                cache,
-                bucket=QUOTA_BUCKET_ASSISTANT,
-                telegram_user_id=user.telegram_user_id,
-                limit=current_status.assistant_daily_limit,
-            ),
+        limits=await build_profile_limits(
+            session, cache, user, current_status, tracker_used=tracker_used,
         ),
         status_note=user.status_note,
     )
@@ -307,6 +327,8 @@ def _status_limit_payload(status: AccountStatus) -> dict[str, int]:
         "ai_daily_limit": int(status.ai_daily_limit),
         "assistant_daily_limit": int(status.assistant_daily_limit),
         "max_trackers": int(status.max_trackers),
+        "ai_5h_limit": int(status.ai_5h_limit),
+        "ai_weekly_limit": int(status.ai_weekly_limit),
     }
 
 

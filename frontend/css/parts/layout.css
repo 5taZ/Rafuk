@@ -2321,6 +2321,10 @@
     background: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
 }
 
+.profile-limit-card--trackers {
+    grid-column: 1 / -1;
+}
+
 .profile-limit-head,
 .profile-limit-meta,
 .admin-user-top,
@@ -2368,6 +2372,8 @@
 .profile-limit-meta {
     color: var(--text-dim);
     font-size: var(--text-xs);
+    flex-wrap: wrap;
+    gap: 6px 12px;
 }
 
 .permissions-list {

@@ -468,15 +468,20 @@ function createApiEvents(context) {
             if (!card || !event.target.closest("[data-admin-save-status]")) return;
             const code = card.dataset.statusCode || "";
             const aiLimit = Number(card.querySelector("[data-admin-status-ai]")?.value || 0);
-            const assistantLimit = Number(card.querySelector("[data-admin-status-assistant]")?.value || 0);
+            const weeklyLimit = Number(card.querySelector("[data-admin-status-weekly]")?.value || 0);
             const trackerLimit = Number(card.querySelector("[data-admin-status-trackers]")?.value || 0);
-            if (![aiLimit, assistantLimit, trackerLimit].every((limit) => Number.isInteger(limit) && limit >= 0 && limit <= 10000)) {
-                showToast("Лимиты должны быть целыми числами от 0 до 10000", "error");
+            if (![aiLimit, weeklyLimit, trackerLimit].every((limit) => Number.isInteger(limit) && limit >= 0)
+                || aiLimit > 10000 || trackerLimit > 10000 || weeklyLimit > 100000) {
+                showToast("Лимиты должны быть целыми: 0–10000 за 5 часов и для трекеров, 0–100000 за неделю", "error");
+                return;
+            }
+            if (Boolean(aiLimit) !== Boolean(weeklyLimit) || weeklyLimit < aiLimit) {
+                showToast("Оба AI-лимита должны быть положительными или нулевыми. Недельный — не меньше 5-часового.", "error");
                 return;
             }
             void updateStatusLimits(code, {
-                ai_daily_limit: aiLimit,
-                assistant_daily_limit: assistantLimit,
+                ai_5h_limit: aiLimit,
+                ai_weekly_limit: weeklyLimit,
                 max_trackers: trackerLimit,
             });
         });

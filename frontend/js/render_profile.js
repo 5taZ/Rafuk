@@ -19,7 +19,9 @@ function createRenderProfile(context) {
         if (!value) return "—";
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return "—";
-        return date.toLocaleTimeString("ru-BY", { hour: "2-digit", minute: "2-digit" });
+        return date.toLocaleString("ru-BY", {
+            timeZone: "Europe/Minsk", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+        });
     }
 
     function _formatDate(value) {
@@ -30,12 +32,13 @@ function createRenderProfile(context) {
         const limit = Number(bucket?.limit || 0);
         const used = Number(bucket?.used || 0);
         const remaining = Number(bucket?.remaining || 0);
+        const available = bucket?.available !== false;
         const track = domEl(
             "progress",
             {
                 className: "quota-progress",
                 value: Math.min(used, limit),
-                attrs: { max: Math.max(1, limit), "aria-label": `${title}: ${used} из ${limit}` },
+                attrs: { max: Math.max(1, limit), hidden: !available || !limit, "aria-label": `${title}: ${used} из ${limit}` },
             },
         );
         return domEl(
@@ -45,15 +48,30 @@ function createRenderProfile(context) {
                 "div",
                 { className: "profile-limit-head" },
                 domEl("span", { className: "profile-limit-title", text: title }),
-                domEl("strong", { className: "profile-limit-count mono", text: `${used} / ${limit}` }),
+                domEl("strong", { className: "profile-limit-count mono", text: `${available ? used : "—"} / ${limit}` }),
             ),
             track,
             domEl(
                 "div",
                 { className: "profile-limit-meta" },
-                domEl("span", { text: `${remaining} осталось` }),
-                domEl("span", { text: `сброс в ${_formatReset(bucket?.resets_at)}` }),
+                domEl("span", { text: available ? `${remaining} осталось` : "Расход временно недоступен" }),
+                domEl("span", { text: !available ? "Попробуйте обновить профиль позже" : !limit ? "AI отключён" : bucket?.resets_at ? `Восстановление: ${_formatReset(bucket.resets_at)}` : "Расхода пока нет" }),
             ),
+        );
+    }
+
+    function _trackerLimitCard(bucket) {
+        const used = Number(bucket?.used || 0);
+        const limit = Number(bucket?.limit || 0);
+        return domEl("article", { className: "profile-limit-card profile-limit-card--trackers" },
+            domEl("div", { className: "profile-limit-head" },
+                domEl("span", { className: "profile-limit-title", text: "Автотрекеры" }),
+                domEl("strong", { className: "profile-limit-count mono", text: `${used} / ${limit}` }),
+            ),
+            domEl("progress", { className: "quota-progress", value: Math.min(used, limit),
+                attrs: { max: Math.max(1, limit), "aria-label": `Работают ${used} из ${limit} автотрекеров` },
+            }),
+            domEl("p", { className: "section-note", text: "Работают одновременно. Трекеры на паузе не занимают место." }),
         );
     }
 
@@ -155,7 +173,7 @@ function createRenderProfile(context) {
         const status = profile.status || {};
         const permissions = profile.permissions || {};
         const accent = _accent(status.accent);
-        const isBare = status.code === "bare_search" || permissions.can_use_ai !== true;
+        const isBare = status.code === "bare_search";
         const heroMeta = [
             `Выдано: ${_formatDate(status.granted_at)}`,
             status.expires_at ? `до ${_formatDate(status.expires_at)}` : "без срока",
@@ -181,12 +199,14 @@ function createRenderProfile(context) {
             domEl(
                 "section",
                 { className: "profile-section" },
-                domEl("h3", { className: "profile-section-title", text: "Лимиты сегодня" }),
+                domEl("h3", { className: "profile-section-title", text: "Лимиты аккаунта" }),
+                isBare ? null : domEl("p", { className: "section-note", text: "AI-анализ и помощник расходуют общий бюджет. Один запрос учитывается за последние 5 часов и 7 дней. Ошибки и ответы из кеша не расходуют лимит." }),
                 domEl(
                     "div",
                     { className: "profile-limits-grid" },
-                    _limitCard("AI-анализ", profile.limits?.ai),
-                    _limitCard("AI-помощник продавца", profile.limits?.assistant),
+                    isBare ? null : _limitCard("AI · за 5 часов", profile.limits?.ai_5h),
+                    isBare ? null : _limitCard("AI · за 7 дней", profile.limits?.ai_weekly),
+                    _trackerLimitCard(profile.limits?.trackers),
                 ),
             ),
             domEl(

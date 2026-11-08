@@ -109,7 +109,7 @@ def test_admin_can_find_user_by_telegram_user_id() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert [item["telegram_user_id"] for item in data] == [880101]
-    assert data[0]["limits"]["ai"]["limit"] == 10
+    assert data[0]["limits"]["ai_5h"]["limit"] == 20
 
 
 def test_admin_can_find_user_by_username_and_first_name() -> None:
@@ -162,7 +162,7 @@ def test_admin_can_filter_users_by_status() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert [item["telegram_user_id"] for item in data] == [880302]
-    assert data[0]["status"]["code"] == "shark"
+    assert data[0]["status"]["code"] == "market_maker"
 
 
 def test_admin_status_filter_uses_effective_status_for_expired_users() -> None:
@@ -221,7 +221,7 @@ def test_admin_can_change_user_status_and_status_fields() -> None:
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["status"]["code"] == "shark"
+    assert body["status"]["code"] == "market_maker"
     assert body["status"]["granted_at"] is not None
     assert body["status"]["expires_at"] is not None
     assert body["status_note"] == "Выдал вручную перед запуском"
@@ -241,7 +241,7 @@ def test_admin_can_change_user_status_and_status_fields() -> None:
             await engine.dispose()
 
     user = asyncio.run(_read_user())
-    assert user.account_status_code == "shark"
+    assert user.account_status_code == "market_maker"
     assert user.status_granted_at is not None
     assert user.status_expires_at is not None
     assert user.status_note == "Выдал вручную перед запуском"
@@ -351,11 +351,13 @@ def test_admin_can_get_status_list() -> None:
 
     assert resp.status_code == 200
     codes = [item["code"] for item in resp.json()]
-    assert codes == ["bare_search", "scout", "flipper", "shark", "market_maker"]
+    assert codes == ["bare_search", "scout", "flipper", "market_maker"]
     assert [item["display_name"] for item in resp.json()] == [
-        "Free", "Pro", "Pro Max", "Pro Max Ultra", "Pro Max Ultra Max",
+        "Free", "Pro", "Max", "Ultra",
     ]
-    assert [item["max_trackers"] for item in resp.json()] == [3, 10, 10, 10, 10]
+    assert [item["max_trackers"] for item in resp.json()] == [3, 10, 10, 10]
+    assert [item["ai_5h_limit"] for item in resp.json()] == [0, 20, 60, 150]
+    assert [item["ai_weekly_limit"] for item in resp.json()] == [0, 100, 350, 1000]
 
 
 def test_admin_can_change_status_limits() -> None:
@@ -364,14 +366,14 @@ def test_admin_can_change_status_limits() -> None:
     with TestClient(app) as client:
         resp = client.patch(
             "/api/v1/admin/statuses/scout",
-            json={"ai_daily_limit": 11, "assistant_daily_limit": 4, "max_trackers": 7},
+            json={"ai_5h_limit": 11, "ai_weekly_limit": 44, "max_trackers": 7},
         )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["code"] == "scout"
-    assert body["ai_daily_limit"] == 11
-    assert body["assistant_daily_limit"] == 4
+    assert body["ai_5h_limit"] == 11
+    assert body["ai_weekly_limit"] == 44
     assert body["max_trackers"] == 7
 
     from api.database import get_engine, get_session_factory
@@ -387,8 +389,8 @@ def test_admin_can_change_status_limits() -> None:
             await engine.dispose()
 
     status = asyncio.run(_read_status())
-    assert status.ai_daily_limit == 11
-    assert status.assistant_daily_limit == 4
+    assert status.ai_5h_limit == 11
+    assert status.ai_weekly_limit == 44
     assert status.max_trackers == 7
 
 
@@ -419,6 +421,23 @@ def test_admin_cannot_set_status_limits_outside_allowed_range() -> None:
 
     assert too_low.status_code == 422
     assert too_high.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("code", "payload"),
+    [
+        ("bare_search", {"ai_5h_limit": 1, "ai_weekly_limit": 10}),
+        ("scout", {"ai_5h_limit": 20, "ai_weekly_limit": 0}),
+        ("scout", {"ai_5h_limit": 50, "ai_weekly_limit": 40}),
+        ("scout", {"ai_weekly_limit": 100001}),
+        ("scout", {"ai_5h_limit": True}),
+        ("scout", {}),
+    ],
+)
+def test_admin_validates_shared_window_limits(code: str, payload: dict) -> None:
+    with TestClient(_admin_app(_ADMIN_TG_ID)) as client:
+        resp = client.patch(f"/api/v1/admin/statuses/{code}", json=payload)
+    assert resp.status_code == 422
 
 
 @pytest.mark.parametrize("invalid", [-1, 10001, 1.5, True, "3"])

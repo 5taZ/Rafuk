@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from api.middleware.telegram_auth import TelegramInitData
-from api.services.account_status import QUOTA_BUCKET_AI, QUOTA_BUCKET_ASSISTANT, quota_key
+from api.services.account_status import QUOTA_BUCKET_AI
+from api.services.ai_quota import ai_quota_key
+
+
+def _quota_used(cache, telegram_user_id: int) -> int:
+    raw = cache._storage.get(ai_quota_key(telegram_user_id), ("{}", 0))[0]
+    return len(json.loads(raw))
 
 
 class FakeAIChatService:
@@ -98,6 +104,8 @@ def _seed_user_status(
                 else:
                     status.ai_daily_limit = ai_limit
                     status.assistant_daily_limit = assistant_limit
+                status.ai_5h_limit = max(ai_limit, assistant_limit)
+                status.ai_weekly_limit = max(ai_limit, assistant_limit) * 10
 
                 user = (
                     await session.execute(
@@ -190,7 +198,7 @@ def test_ai_endpoint_rejects_bare_search_with_premium_required(monkeypatch) -> N
     assert resp.status_code == 403
     assert resp.json()["detail"]["error"] == "premium_required"
     assert resp.json()["detail"]["bucket"] == "ai"
-    assert resp.json()["detail"]["message"] == "AI доступен со статуса Pro"
+    assert resp.json()["detail"]["message"] == "AI доступен на тарифах Pro, Max и Ultra."
     assert fake_ai.calls == []
     assert not [k for k in cache._storage if k.startswith("quota:")]
 
@@ -265,11 +273,11 @@ def test_cached_negotiate_does_not_consume_second_quota(monkeypatch) -> None:
         client.app.state.cache = cache
         first = client.post("/api/v1/ai/negotiate", json=payload)
         second = client.post("/api/v1/ai/negotiate", json=payload)
-        raw_used = cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0]
+        raw_used = _quota_used(cache, telegram_user_id)
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert raw_used == "1"
+    assert raw_used == 1
     assert len(fake_ai.calls) == 1
 
 
@@ -293,11 +301,11 @@ def test_cached_price_advice_does_not_consume_second_quota(monkeypatch) -> None:
         client.app.state.cache = cache
         first = client.post("/api/v1/ai/price-advice", json=payload)
         second = client.post("/api/v1/ai/price-advice", json=payload)
-        raw_used = cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0]
+        raw_used = _quota_used(cache, telegram_user_id)
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert raw_used == "1"
+    assert raw_used == 1
     assert len(fake_ai.calls) == 1
 
 
@@ -452,7 +460,7 @@ def test_cached_listing_assistant_still_requires_current_entitlement(monkeypatch
     assert not [k for k in cache._storage if k.startswith("quota:")]
 
 
-def test_listing_assistant_uses_assistant_bucket(monkeypatch) -> None:
+def test_listing_assistant_uses_shared_ai_budget(monkeypatch) -> None:
     from api.services.cache import MemoryCache
 
     telegram_user_id = 730005
@@ -475,15 +483,12 @@ def test_listing_assistant_uses_assistant_bucket(monkeypatch) -> None:
         )
 
     assert resp.status_code == 200, resp.text
-    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"
-    assert quota_key(QUOTA_BUCKET_AI, telegram_user_id) not in cache._storage
+    assert _quota_used(cache, telegram_user_id) == 1
     assert fake_ai.calls == 1
 
 
-def test_ai_and_assistant_quota_buckets_are_independent(monkeypatch) -> None:
-    """RV-AI-07: the rejected second AI call no longer stays on the
-    counter (it used to read "2" with limit 1); otherwise a later refund
-    would only cancel the overshoot instead of returning a usable unit."""
+def test_ai_and_assistant_share_both_quota_windows(monkeypatch) -> None:
+    """RV-AI-07: rejected work must leave both shared windows unchanged."""
     from api.services.cache import MemoryCache
 
     telegram_user_id = 730006
@@ -526,11 +531,10 @@ def test_ai_and_assistant_quota_buckets_are_independent(monkeypatch) -> None:
         )
 
     assert first_ai.status_code == 200
-    assert assistant.status_code == 200, assistant.text
+    assert assistant.status_code == 429, assistant.text
     assert second_ai.status_code == 429
     assert second_ai.json()["detail"]["bucket"] == "ai"
-    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "1"
-    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"
+    assert _quota_used(cache, telegram_user_id) == 1
 
 
 # ── RV2-AI-12 / RV2-AI2-08: refunds when nothing is delivered ──────────
@@ -571,7 +575,7 @@ def test_negotiate_provider_failure_is_503_and_refunded(monkeypatch) -> None:
 
     assert failed.status_code == 503
     assert retried.status_code == 200
-    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "1"
+    assert _quota_used(cache, telegram_user_id) == 1
 
 
 def test_price_advice_market_data_error_is_refunded(monkeypatch) -> None:
@@ -602,7 +606,7 @@ def test_price_advice_market_data_error_is_refunded(monkeypatch) -> None:
 
     assert resp.status_code == 500
     assert fake_ai.calls == []
-    assert cache._storage[quota_key(QUOTA_BUCKET_AI, telegram_user_id)][0] == "0"
+    assert _quota_used(cache, telegram_user_id) == 0
 
 
 def test_listing_assistant_fallback_is_marked_and_charged_like_analyze(monkeypatch) -> None:
@@ -626,7 +630,7 @@ def test_listing_assistant_fallback_is_marked_and_charged_like_analyze(monkeypat
     assert resp.status_code == 200, resp.text
     assert resp.json()["source"] == "fallback"
     # A delivered market draft stays charged, as on /analyze (owner question 2).
-    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "1"
+    assert _quota_used(cache, telegram_user_id) == 1
 
 
 def test_listing_assistant_error_is_refunded(monkeypatch) -> None:
@@ -657,7 +661,7 @@ def test_listing_assistant_error_is_refunded(monkeypatch) -> None:
 
     assert resp.status_code == 500
     assert fake_ai.calls == 0
-    assert cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, telegram_user_id)][0] == "0"
+    assert _quota_used(cache, telegram_user_id) == 0
 
 
 def test_listing_assistant_ai_answer_is_marked_ai(monkeypatch) -> None:
