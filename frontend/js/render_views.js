@@ -41,7 +41,7 @@ function createRenderViews(context) {
             if (!elements.filterDropdown || !elements.filterCategories) return;
 
             // Toggle visibility
-            elements.filterDropdown.hidden = !state.filters.filterDropdownOpen;
+            setVisibilityAnimated(elements.filterDropdown, state.filters.filterDropdownOpen);
             if (elements.filterBtn) {
                 elements.filterBtn.setAttribute("aria-expanded", String(state.filters.filterDropdownOpen));
             }

@@ -91,7 +91,6 @@ function createApiEvents(context) {
     // ── Event binding ────────────────────────────────────────────────────
     const _searchDebounce = { timer: null };
     const _preloadCache = [];
-    let _filterCloseTimeout = null;
     // FE-NEW-8: keep dedup state in module scope, not on document.
     let _escapeHandler = null;
 
@@ -496,10 +495,8 @@ function createApiEvents(context) {
         }
         // ── Filter button (toggle dropdown) ───────────────────────────
         elements.filterBtn?.addEventListener("click", () => {
-            const prefersReducedMotion = _prefersReducedMotion();
             if (!state.filters.filterDropdownOpen) {
                 clearPriceError();
-                if (_filterCloseTimeout) { clearTimeout(_filterCloseTimeout); _filterCloseTimeout = null; }
                 state.filters.pendingCategory = state.filters.category;
                 state.filters.pendingCondition = state.filters.condition;
                 state.filters.pendingSellerType = state.filters.sellerType;
@@ -508,17 +505,9 @@ function createApiEvents(context) {
                 state.filters.pendingRegionName = state.filters.regionName;
                 state.filters.filterDropdownOpen = true;
                 renderAll();
-            } else if (prefersReducedMotion) {
+            } else {
                 state.filters.filterDropdownOpen = false;
                 renderAll();
-            } else {
-                elements.filterDropdown?.classList.add("closing");
-                _filterCloseTimeout = setTimeout(() => {
-                    _filterCloseTimeout = null;
-                    elements.filterDropdown?.classList.remove("closing");
-                    state.filters.filterDropdownOpen = false;
-                    renderAll();
-                }, 150);
             }
 
             _haptic("light");
@@ -529,21 +518,9 @@ function createApiEvents(context) {
             if (!state.filters.filterDropdownOpen) return;
             const dropdown = elements.filterDropdown;
             const btn = elements.filterBtn;
-            const prefersReducedMotion = _prefersReducedMotion();
             if (dropdown && !dropdown.hidden && !dropdown.contains(event.target) && btn && !btn.contains(event.target)) {
-                if (prefersReducedMotion) {
-                    state.filters.filterDropdownOpen = false;
-                    renderAll();
-                } else {
-                    dropdown.classList.add("closing");
-                    if (_filterCloseTimeout) clearTimeout(_filterCloseTimeout);
-                    _filterCloseTimeout = setTimeout(() => {
-                        _filterCloseTimeout = null;
-                        dropdown.classList.remove("closing");
-                        state.filters.filterDropdownOpen = false;
-                        renderAll();
-                    }, 150);
-                }
+                state.filters.filterDropdownOpen = false;
+                renderAll();
             }
         });
 

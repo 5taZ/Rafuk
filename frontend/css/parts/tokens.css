@@ -161,6 +161,11 @@
     --t-slow: 280ms;
     --easing-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
     --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
+    --motion-duration-in: 280ms;
+    --motion-duration-out: 220ms;
+    --motion-easing-in: var(--easing-decelerate);
+    --motion-easing-out: cubic-bezier(0.4, 0, 0.65, 1);
+    --motion-distance: 24px;
     /* Transition shorthands — use these for consistent motion */
     --tr-base: var(--t-base) var(--easing-standard);
     --tr-fast: var(--t-fast) var(--easing-standard);
@@ -419,6 +424,7 @@ button:focus-visible,
 html {
     scroll-behavior: smooth;
     font-size: var(--text-md);
+    background: var(--bg);
 }
 
 /* FE-M5 (Wave 25.4): the ``!important`` on ``background``/``color``

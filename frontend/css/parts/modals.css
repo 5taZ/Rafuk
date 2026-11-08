@@ -3,16 +3,10 @@
     position: fixed;
     inset: 0;
     z-index: 500;
-    /* Open state: keyframe animation guarantees the entry plays from the
-       hidden frame every time the modal goes from `display: none` to
-       `display: block` (which `[hidden]` does). Transition-based fade-ins
-       can lag on the first frame because the browser may collapse the
-       display change and the opacity change into a single paint. */
-    animation: modal-overlay-in 200ms ease forwards;
 }
 
-.detail-modal.is-closing {
-    animation: modal-overlay-out 200ms ease forwards;
+.is-closing {
+    pointer-events: none;
 }
 
 /* When a modal is open, lock body scroll to prevent double-scroll.
@@ -33,16 +27,13 @@ body.modal-open {
 .detail-overlay {
     position: absolute;
     inset: 0;
-    background: var(--overlay);
-    backdrop-filter: blur(4px);
-}
-
-[data-theme="light"] .detail-overlay {
+    z-index: 0;
     background: var(--overlay);
 }
 
 .detail-sheet {
     position: absolute;
+    z-index: 1;
     left: 0;
     right: 0;
     bottom: 0;
@@ -55,42 +46,15 @@ body.modal-open {
     border-top-right-radius: 20px;
     box-shadow: var(--shadow-prominent);
     border-top: 1px solid var(--border);
-    will-change: transform;
-    animation: modal-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
-}
-
-.detail-modal.is-closing .detail-sheet {
-    animation: modal-sheet-out 240ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
 #detail-modal {
     --detail-gutter: clamp(16px, 5vw, 24px);
-    --listing-sheet-time: var(--t-slow);
-    animation-duration: var(--listing-sheet-time);
-}
-
-#detail-modal.is-closing {
-    --listing-sheet-time: 220ms;
 }
 
 #detail-modal .detail-sheet {
     max-width: 520px;
     margin-inline: auto;
-    animation: listing-sheet-in var(--listing-sheet-time) var(--easing-decelerate) both;
-}
-
-#detail-modal.is-closing .detail-sheet {
-    animation: listing-sheet-out var(--listing-sheet-time) cubic-bezier(0.4, 0, 0.65, 1) both;
-}
-
-@keyframes listing-sheet-in {
-    from { transform: translateY(24px); }
-    to   { transform: translateY(0); }
-}
-
-@keyframes listing-sheet-out {
-    from { transform: translateY(0); }
-    to   { transform: translateY(24px); }
 }
 
 .typed-confirm-modal {
@@ -100,8 +64,13 @@ body.modal-open {
     align-items: center;
     justify-content: center;
     padding: var(--space-4);
-    background: var(--overlay);
-    backdrop-filter: blur(4px);
+}
+
+.modal-content,
+.typed-confirm-sheet,
+.lp-menu-sheet {
+    position: relative;
+    z-index: 1;
 }
 
 .typed-confirm-sheet {
@@ -207,35 +176,6 @@ body.modal-open {
 .typed-confirm-btn--danger:hover:not(:disabled) {
     background: color-mix(in srgb, var(--danger) 84%, black);
     border-color: color-mix(in srgb, var(--danger) 84%, black);
-}
-
-@keyframes modal-overlay-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-}
-
-@keyframes modal-overlay-out {
-    from { opacity: 1; }
-    to   { opacity: 0; }
-}
-
-@keyframes modal-sheet-in {
-    from { transform: translateY(100%); }
-    to   { transform: translateY(0); }
-}
-
-@keyframes modal-sheet-out {
-    from { transform: translateY(0); }
-    to   { transform: translateY(100%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .detail-modal,
-    .detail-modal.is-closing,
-    .detail-sheet,
-    .detail-modal.is-closing .detail-sheet {
-        animation: none !important;
-    }
 }
 
 .detail-sheet .detail-top-bar {
@@ -972,6 +912,7 @@ body.modal-open {
 }
 
 /* ===== Reminders ===== */
+#expenses-modal .detail-sheet,
 .detail-sheet.reminders-sheet {
     width: 100%;
     max-width: 560px;
@@ -1350,12 +1291,10 @@ body.modal-open {
     position: fixed;
     inset: 0;
     z-index: 1050;
-    background: var(--overlay);
     display: flex;
     align-items: flex-end;
     justify-content: center;
     padding: 0 12px calc(env(safe-area-inset-bottom, 12px) + 12px);
-    animation: lp-overlay-in 160ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
 }
 
 .lp-menu-sheet {
@@ -1368,7 +1307,6 @@ body.modal-open {
     box-shadow: var(--shadow-prominent);
     display: flex;
     flex-direction: column;
-    animation: lp-sheet-in 220ms var(--easing-decelerate, cubic-bezier(0, 0, 0.2, 1));
 }
 
 .lp-menu-item {
@@ -1423,27 +1361,6 @@ body.modal-open {
 
 .lp-menu-label {
     flex: 1;
-}
-
-@keyframes lp-overlay-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-@keyframes lp-sheet-in {
-    from { transform: translateY(20px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .lp-menu-overlay,
-    .lp-menu-sheet { animation: none; }
-}
-
-body.lp-menu-open {
-    /* Soft scroll lock — don't fight modal-open's heavy scroll lock,
-       just discourage background scrolling while the sheet is up. */
-    overflow: hidden;
 }
 
 /* ===== Pull-to-refresh indicator =====

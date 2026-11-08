@@ -520,7 +520,7 @@ function createRenderCore(context) {
                 const body = elements.panelBodies[panelName];
 
                 if (body) {
-                    body.hidden = !isOpen;
+                    setVisibilityAnimated(body, isOpen);
                 }
 
                 button.textContent = isOpen ? "Свернуть" : "Показать";

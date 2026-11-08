@@ -123,7 +123,9 @@ def test_tracker_scaling_indexes_round_trip_without_touching_data(tmp_path: Path
     assert names <= indexes()
     _run_alembic(path, ("stamp", "20261108_0033"), ("downgrade", "-1"))
     assert not names & indexes()
-    _run_alembic(path, ("upgrade", "head"))
+    # RV-DB-01: step only the index revision; the model schema already
+    # contains columns introduced by later migrations.
+    _run_alembic(path, ("upgrade", "20261108_0033"))
     assert names <= indexes()
 
 

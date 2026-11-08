@@ -1970,8 +1970,8 @@ def test_consent_modal_cancel_emits_toast() -> None:
     )
     assert on_cancel_match, "onCancel() not found in app_actions.js"
     body = on_cancel_match.group("body")
-    # Must hide the modal AND inform the user before rejecting.
-    assert "modal.hidden = true" in body
+    # UI-MOTION: dismissal keeps focus and scroll locked through the exit.
+    assert "closeModalAnimated(modal)" in body
     assert "showToast(" in body, (
         "onCancel must show a toast when the user dismisses the consent gate"
     )
@@ -2786,11 +2786,10 @@ def test_long_press_action_menu_helper_and_listing_card_wiring() -> None:
     show_start = helpers.index("function showLongPressMenu")
     show_body = helpers[show_start:helpers.index("\nfunction attachLongPress", show_start)]
     assert "hideLongPressMenu();" in show_body
-    assert "_longPressPreviousFocus = document.activeElement" in show_body
-    assert "_applyInertToSiblings(overlay)" in show_body
-    assert "trapFocus(sheet)" in show_body
-    assert "_restoreInertSiblings(_longPressOverlay)" in show_body
-    assert "_longPressPreviousFocus.focus" in show_body
+    # UI-MOTION: menus share modal focus, inert, scroll and exit handling.
+    assert "openModalAnimated(overlay)" in show_body
+    assert "closeModalAnimated(_longPressOverlay, options)" in show_body
+    assert "onClosed:" in show_body
 
     builder = (JS_DIR / "render_card_builders.js").read_text(encoding="utf-8")
     assert "attachLongPress(listing" in builder
@@ -5739,6 +5738,122 @@ const submit = () => elements.reminderForm.dispatchEvent(new FakeEvent('submit')
     elements.remindersClose.click();
     elements.remindersOverlay.click();
     assert.equal(closed, 2);
+})()
+''' + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_shared_motion_reverses_from_current_frame_and_keeps_modal_locks() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r'''
+const assert = require("assert");
+matchMedia = () => ({matches: false});
+const calls = [];
+const properties = {
+    "--motion-duration-in": "280ms", "--motion-duration-out": "220ms",
+    "--motion-easing-in": "cubic-bezier(0, 0, 0.2, 1)",
+    "--motion-easing-out": "cubic-bezier(0.4, 0, 0.65, 1)",
+    "--motion-distance": "24px",
+};
+getComputedStyle = target => ({opacity: "1", transform: "none", ...target.sample,
+    getPropertyValue: key => properties[key] || ""});
+FakeElement.prototype.animate = function(frames, options) {
+    let resolve, reject;
+    const finished = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const effect = {target: this, frames, options, finished, complete: resolve,
+        cancel() { this.cancelled = true; reject(new Error("cancelled")); }};
+    calls.push(effect);
+    return effect;
+};
+const opener = el("button", {}, "Открыть");
+const panel = el("div", {class: "detail-sheet"}, el("button", {}, "Закрыть"));
+const backdrop = el("div", {class: "detail-overlay"});
+const modal = el("div", {hidden: true}, backdrop, panel);
+const otherPanel = el("div", {class: "modal-content"}, el("button", {}, "Отмена"));
+const nested = el("div", {hidden: true}, otherPanel);
+document.body.append(opener, modal, nested);
+const finishCurrent = async () => {
+    for (const animation of calls.filter(a => !a.cancelled)) animation.complete();
+    await tick();
+};
+(async () => {
+    opener.focus();
+    scrollY = 240;
+    openModalAnimated(modal);
+    openModalAnimated(modal);
+    assert.equal(calls.length, 2, "re-rendering never restarts the animation");
+    assert.ok(calls.every(a => a.target !== modal), "the root is never composited with opacity");
+    assert.equal(calls[0].frames[0].transform, "translateY(24px)");
+    assert.ok(calls.every(a => a.options.duration === 280));
+    assert.equal(document.body.style.top, "-240px");
+    panel.sample = {opacity: "0.4", transform: "matrix(1, 0, 0, 1, 0, 14.4)"};
+    backdrop.sample = {opacity: "0.4", transform: "none"};
+    let staleClose = 0;
+    closeModalAnimated(modal, {onClosed: () => staleClose++});
+    assert.deepEqual(calls[2].frames[0], panel.sample);
+    assert.equal(calls[2].options.duration, 220);
+    assert.equal(modal.hidden, false, "close waits for both surfaces");
+    panel.sample = {opacity: "0.25", transform: "matrix(1, 0, 0, 1, 0, 18)"};
+    openModalAnimated(modal);
+    assert.deepEqual(calls[4].frames[0], panel.sample, "reopen resumes the visible frame");
+    await finishCurrent();
+    assert.equal(staleClose, 0, "an interrupted exit cannot run its cleanup");
+    assert.equal(modal.hidden, false);
+    openModalAnimated(nested);
+    await finishCurrent();
+    assert.ok(modal.hasAttribute("inert"));
+    closeModalAnimated(nested);
+    assert.ok(modal.hasAttribute("inert"), "the background stays inert during exit");
+    await finishCurrent();
+    assert.ok(!modal.hasAttribute("inert"));
+    assert.ok(document.body.classList.contains("modal-open"));
+    closeModalAnimated(modal);
+    await finishCurrent();
+    assert.equal(modal.hidden, true);
+    assert.ok(!document.body.classList.contains("modal-open"), "reversal did not leak a lock");
+    assert.equal(document.activeElement, opener);
+    assert.ok(!opener.hasAttribute("inert"));
+    matchMedia = () => ({matches: true});
+    const count = calls.length;
+    openModalAnimated(modal);
+    closeModalAnimated(modal);
+    assert.equal(modal.hidden, true);
+    assert.equal(calls.length, count, "reduced motion never starts an animation");
+})()
+''' + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_long_press_waits_for_exit_before_opening_another_modal() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + r'''
+const assert = require("assert");
+matchMedia = () => ({matches: false});
+getComputedStyle = () => ({opacity: "1", transform: "none", getPropertyValue: () => ""});
+const pending = [];
+FakeElement.prototype.animate = () => ({
+    finished: new Promise(resolve => pending.push(resolve)), cancel() {},
+});
+const opener = el("button", {}, "Меню");
+const modal = el("div", {hidden: true}, el("div", {class: "detail-sheet"}, el("button")));
+document.body.append(opener, modal);
+opener.focus();
+let selected = 0;
+showLongPressMenu([{label: "Открыть", onSelect() { selected++; openModalAnimated(modal); }}]);
+const menu = document.querySelector(".lp-menu-overlay");
+(async () => {
+    menu.querySelector("button").click();
+    assert.equal(selected, 0);
+    assert.equal(menu.hidden, false);
+    pending.splice(0).forEach(resolve => resolve());
+    await tick();
+    assert.equal(selected, 1);
+    assert.equal(menu.hidden, true);
+    assert.equal(modal.hidden, false);
+    assert.ok(opener.hasAttribute("inert"), "the new dialog owns background inert");
+    closeModalAnimated(modal);
+    pending.splice(0).forEach(resolve => resolve());
+    await tick();
+    assert.ok(!opener.hasAttribute("inert"));
+    assert.ok(!document.body.classList.contains("modal-open"));
 })()
 ''' + _NODE_FAIL
     _node_ok(harness)

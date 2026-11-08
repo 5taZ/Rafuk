@@ -506,6 +506,7 @@ function createRenderModals(context) {
             elements.expensesSubtitle.textContent = leadTitle;
             elements.expensesSubtitle.hidden = false;
         }
+        void actions.loadExpenses(leadId);
         if (elements.expensesModal) {
             if (state.misc.modalCleanup) {
                 state.misc.modalCleanup();
@@ -520,7 +521,6 @@ function createRenderModals(context) {
             openModalAnimated(elements.expensesModal);
             elements.expensesModal.querySelector(".detail-sheet-content").scrollTop = 0;
         }
-        void actions.loadExpenses(leadId);
     }
 
     function closeExpensesModal() {
@@ -528,14 +528,16 @@ function createRenderModals(context) {
             state.misc.modalCleanup();
             state.misc.modalCleanup = null;
         }
-        if (elements.expensesModal) {
-            closeModalAnimated(elements.expensesModal);
-        }
         state.expenses.currentLeadId = null;
-        state.expenses.items = [];
-        if (elements.expenseTypeSelect) elements.expenseTypeSelect.value = "delivery";
-        if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
-        if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
+        state.expenses.requestId++;
+        if (elements.expensesModal) {
+            closeModalAnimated(elements.expensesModal, { onClosed: () => {
+                state.expenses.items = [];
+                if (elements.expenseTypeSelect) elements.expenseTypeSelect.value = "delivery";
+                if (elements.expenseAmountInput) elements.expenseAmountInput.value = "";
+                if (elements.expenseNotesInput) elements.expenseNotesInput.value = "";
+            } });
+        }
     }
 
     function renderReminders() {
@@ -635,9 +637,9 @@ function createRenderModals(context) {
         const zone = new Intl.DateTimeFormat("ru-RU", { timeZoneName: "short" }).formatToParts(date).find(part => part.type === "timeZoneName")?.value;
         const timezone = document.getElementById("reminder-timezone");
         if (timezone) timezone.textContent = `Время вашего устройства${zone ? ` · ${zone}` : ""}`;
+        void actions.loadReminders(leadId);
         openModalAnimated(elements.remindersModal);
         elements.remindersModal.querySelector(".detail-sheet-content").scrollTop = 0;
-        void actions.loadReminders(leadId);
     }
 
     function closeRemindersModal() {

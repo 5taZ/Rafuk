@@ -239,6 +239,12 @@ user first**.
 * **Adding a frontend feature** → vanilla JS, no bundler. Read the
   `frontend/js/api_*.js` and `frontend/js/render_*.js` files and
   follow the existing module split. CSS uses `frontend/css/parts/`.
+  Dialogs and menus use `openModalAnimated` / `closeModalAnimated`;
+  inline panels use `setVisibilityAnimated` from `dom_helpers.js`.
+  Their shared `--motion-*` tokens live in `tokens.css`. Animate the
+  panel and its backdrop separately, without opacity or backdrop blur
+  on the dialog root. Keep sheet dimensions stable while data loads,
+  and clear visible form content in `onClosed` after the exit finishes.
 * **Touching the AI pipeline** → it lives across
   `api/services/ai_analysis_pipeline.py`,
   `api/services/ai_service.py`,

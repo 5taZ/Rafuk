@@ -26,6 +26,18 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 FRONTEND_DIR = REPO_ROOT / "frontend"
 
 
+@pytest.fixture(autouse=True)
+def create_test_tables():
+    # UI-MOTION: browser tests mock HTTP; backend async fixtures conflict
+    # with the event loop owned by Playwright's synchronous browser API.
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _flush_test_redis():
+    yield
+
+
 @pytest.fixture(scope="session")
 def frontend_path() -> pathlib.Path:
     """Absolute path to the frontend/ directory."""

@@ -22,6 +22,7 @@ function createAppActions(baseContext) {
     context.domFragment = domFragment;
     context.openModalAnimated = openModalAnimated;
     context.closeModalAnimated = closeModalAnimated;
+    context.setVisibilityAnimated = (...args) => setVisibilityAnimated(...args);
     context.bindRovingTablist = bindRovingTablist;
     context._prefersReducedMotion = _prefersReducedMotion;
     context.confirmAction = async (options) => (await _showConfirmDialog(options)) !== null;
@@ -293,10 +294,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261108-rolling-ai"),
-                context._loadScript("js/api_ai_render.js?v=20261108-rolling-ai"),
-                context._loadScript("js/api_ai.js?v=20261108-rolling-ai"),
-                context._loadScript("js/api_listing_assistant.js?v=20261108-rolling-ai"),
+                context._loadScript("js/api_ai_modal.js?v=20261108-unified-motion"),
+                context._loadScript("js/api_ai_render.js?v=20261108-unified-motion"),
+                context._loadScript("js/api_ai.js?v=20261108-unified-motion"),
+                context._loadScript("js/api_listing_assistant.js?v=20261108-unified-motion"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -918,21 +919,8 @@ function createAppActions(baseContext) {
         crossCb.checked = false;
         pdCb.checked = false;
         acceptBtn.disabled = true;
-        // FR-05: trapFocus() does not hand focus back, so remember it;
-        // the counted scroll lock keeps the page from jumping under the
-        // gate (and from fighting a sheet that is already locked).
-        const previousFocus = document.activeElement;
-        lockBodyScroll();
-        modal.hidden = false;
-        // FE-H4/UX-H1: install a focus trap when the modal opens so a
-        // keyboard user can't Tab out of the consent dialog and
-        // interact with the app underneath (which has its own shortcuts
-        // and scroll). cleanup() removes it on every exit path.
-        let focusCleanup = null;
-        if (typeof trapFocus === "function") focusCleanup = trapFocus(modal);
-        // UX-M2: also hide everything else from assistive tech for
-        // the duration of the consent gate.
-        if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(modal);
+        // UI-MOTION: retain focus, inert and scroll locks through the exit.
+        openModalAnimated(modal);
 
         function updateAcceptBtn() {
             acceptBtn.disabled = !(aiCb.checked && crossCb.checked && pdCb.checked);
@@ -959,13 +947,12 @@ function createAppActions(baseContext) {
                 return;
             }
             cleanup();
-            modal.hidden = true;
-            resolve(true);
+            closeModalAnimated(modal, { onClosed: () => resolve(true) });
         }
 
         function onCancel() {
             cleanup();
-            modal.hidden = true;
+            closeModalAnimated(modal);
             // FE-08: Cancel used to be a silent close — the user
             // would tap "Отмена" and nothing visible happened, then
             // every AI button quietly no-op'd because the rejection
@@ -1011,15 +998,6 @@ function createAppActions(baseContext) {
             cancelBtn.removeEventListener("click", onCancel);
             if (privacyLink) privacyLink.removeEventListener("click", onPrivacyLink);
             document.removeEventListener("keydown", onKeydown, true);
-            if (typeof focusCleanup === "function") focusCleanup();
-            // UX-M2: restore inert AFTER the focus trap cleanup so the
-            // restored focus target isn't itself sitting in an inert
-            // subtree.
-            if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(modal);
-            unlockBodyScroll();
-            if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
-                try { previousFocus.focus({ preventScroll: true }); } catch (_) {}
-            }
         }
 
         acceptBtn.addEventListener("click", onAccept);
@@ -1102,6 +1080,7 @@ function createAppActions(baseContext) {
         return new Promise((resolve) => {
             const overlay = document.createElement("div");
             overlay.className = "detail-modal typed-confirm-modal";
+            overlay.hidden = true;
             const sheet = document.createElement("div");
             sheet.className = "typed-confirm-sheet";
             // FR-05: announce it as a modal dialog with its title, text and
@@ -1166,20 +1145,9 @@ function createAppActions(baseContext) {
             btnRow.append(cancelBtn, confirmBtn);
             sheet.append(btnRow);
             overlay.appendChild(sheet);
-            const previousFocus = document.activeElement;
             document.body.appendChild(overlay);
-            // FR-05: the counted lock (pins ``top``) instead of toggling
-            // body.modal-open by hand — that jumped the page to the top and
-            // unlocked a sheet still open underneath.
-            lockBodyScroll();
-            let focusCleanup = null;
-            if (typeof trapFocus === "function") focusCleanup = trapFocus(sheet);
-            // UX-M2: hide the rest of the page from assistive tech
-            // while the typed-delete-confirm dialog is open. The
-            // overlay was just appended to body so it's a body
-            // child by the time we apply.
-            if (typeof _applyInertToSiblings === "function") _applyInertToSiblings(overlay);
-            (input || cancelBtn).focus();
+            openModalAnimated(overlay);
+            (input || cancelBtn).focus({ preventScroll: true });
 
             // FR-05: Escape cancels; capture + stopPropagation so the sheet
             // underneath doesn't close on the same keypress.
@@ -1195,17 +1163,10 @@ function createAppActions(baseContext) {
                 if (closed) return;
                 closed = true;
                 document.removeEventListener("keydown", onKeydown, true);
-                if (typeof focusCleanup === "function") focusCleanup();
-                // UX-M2: restore inert siblings BEFORE removing the
-                // overlay — once it's gone, ``_inertSiblings`` is
-                // unreachable and the page would stay frozen.
-                if (typeof _restoreInertSiblings === "function") _restoreInertSiblings(overlay);
-                overlay.remove();
-                unlockBodyScroll();
-                if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
-                    try { previousFocus.focus({ preventScroll: true }); } catch (_) {}
-                }
-                resolve(result);
+                closeModalAnimated(overlay, { onClosed: () => {
+                    overlay.remove();
+                    resolve(result);
+                } });
             }
 
             cancelBtn.addEventListener("click", () => close(null));
@@ -1213,7 +1174,7 @@ function createAppActions(baseContext) {
                 if (!confirmBtn.disabled) close(input?.value ?? "");
             });
             overlay.addEventListener("click", (e) => {
-                if (e.target === overlay) close(null);
+                if (e.target === overlay || e.target.classList.contains("detail-overlay")) close(null);
             });
         });
     }

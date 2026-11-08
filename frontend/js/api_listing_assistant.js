@@ -36,6 +36,7 @@ function createApiListingAssistant(context) {
         formatPriceRange,
         checkAiConsent,
         confirmAction,
+        setVisibilityAnimated,
         logClientError = () => {},
     } = context;
 
@@ -688,7 +689,7 @@ function createApiListingAssistant(context) {
     }
 
     function showResultOverlay() {
-        if (resultOverlay) resultOverlay.hidden = false;
+        if (resultOverlay) setVisibilityAnimated(resultOverlay, true);
         if (resultBox) resultBox.scrollTop = 0;
         // Wave 26: la-sheet-expanded was used to grow the sheet on
         // result reveal. Now that .ai-sheet and .la-sheet share the
@@ -698,7 +699,7 @@ function createApiListingAssistant(context) {
     }
 
     function hideResultOverlay() {
-        if (resultOverlay) resultOverlay.hidden = true;
+        if (resultOverlay) setVisibilityAnimated(resultOverlay, false);
         _cancelLaProgress();
     }
 

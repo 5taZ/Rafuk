@@ -369,33 +369,6 @@
     padding: var(--space-3);
     margin-bottom: var(--space-3);
     box-shadow: var(--shadow-lg);
-    animation: dropdownSlideIn 0.2s ease-out;
-}
-
-.filter-dropdown.closing {
-    animation: dropdownSlideOut var(--t-base) ease-in forwards;
-}
-
-@keyframes dropdownSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-@keyframes dropdownSlideOut {
-    from {
-        opacity: 1;
-        transform: translateY(0);
-    }
-    to {
-        opacity: 0;
-        transform: translateY(-8px);
-    }
 }
 
 /* [hidden] override moved to global rule at top */

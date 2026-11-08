@@ -553,7 +553,6 @@
     flex-direction: column;
     min-height: 0;
     background: var(--bg-card);
-    animation: aiFadeIn 0.22s ease;
 }
 
 .la-result-header {
@@ -637,17 +636,7 @@
 .la-section {
     padding: 16px 0;
     border-bottom: none;
-    animation: aiSlideUp 0.25s ease both;
 }
-
-.la-section:nth-child(1) { animation-delay: 0.05s; }
-.la-section:nth-child(2) { animation-delay: 0.1s; }
-.la-section:nth-child(3) { animation-delay: 0.12s; }
-.la-section:nth-child(4) { animation-delay: 0.18s; }
-.la-section:nth-child(5) { animation-delay: 0.2s; }
-.la-section:nth-child(6) { animation-delay: 0.25s; }
-.la-section:nth-child(7) { animation-delay: 0.3s; }
-.la-section:nth-child(8) { animation-delay: 0.32s; }
 
 .la-section + .la-section {
     border-top: 1px solid var(--border);
@@ -2463,49 +2452,6 @@ select.tracker-control {
 
     .tracker-cards {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-/* =====================================================================
- * Edit-tracker modal — animate the same way as the bottom-sheet modals
- * so the user gets consistent motion. .modal-overlay isn't a sheet
- * (it's a centred dialog), so we fade+scale the content instead of
- * sliding from the bottom.
- * ===================================================================== */
-
-.modal-overlay {
-    animation: modal-overlay-in 200ms ease forwards;
-}
-
-.modal-overlay.is-closing {
-    animation: modal-overlay-out 200ms ease forwards;
-}
-
-.modal-overlay .modal-content {
-    will-change: transform, opacity;
-    animation: modal-dialog-in 220ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
-}
-
-.modal-overlay.is-closing .modal-content {
-    animation: modal-dialog-out 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
-}
-
-@keyframes modal-dialog-in {
-    from { opacity: 0; transform: translateY(8px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes modal-dialog-out {
-    from { opacity: 1; transform: translateY(0) scale(1); }
-    to   { opacity: 0; transform: translateY(8px) scale(0.98); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .modal-overlay,
-    .modal-overlay.is-closing,
-    .modal-overlay .modal-content,
-    .modal-overlay.is-closing .modal-content {
-        animation: none !important;
     }
 }
 

@@ -108,18 +108,18 @@ function trapFocus(container) {
         if (e.shiftKey) {
             if (document.activeElement === first) {
                 e.preventDefault();
-                last.focus();
+                last.focus({ preventScroll: true });
             }
         } else {
             if (document.activeElement === last) {
                 e.preventDefault();
-                first.focus();
+                first.focus({ preventScroll: true });
             }
         }
     }
 
     container.addEventListener("keydown", handleKeydown);
-    focusable[0].focus();
+    focusable[0].focus({ preventScroll: true });
     return () => container.removeEventListener("keydown", handleKeydown);
 }
 
@@ -257,17 +257,66 @@ function unlockBodyScroll() {
     window.scrollTo({ top: __scrollLockY, left: 0, behavior: "instant" });
 }
 
-/* ─── Animated modal open/close helpers ────────────────────────────────
- * The CSS uses pure @keyframes (`modal-overlay-in`, `modal-sheet-in`,
- * etc.) which always replay from frame 0 when the element transitions
- * from `display: none` (via `[hidden]`) to `display: block`. That means
- * we don't have to fight the browser's paint pipeline with reflow tricks
- * — toggling `hidden` is enough to play the entry animation cleanly.
- *
- * For close we add `.is-closing`, which swaps to the reverse keyframes,
- * then wait for `animationend` before flipping `[hidden]=true` so the
- * slide-down actually plays.
- */
+/* ─── Shared surface motion ──────────────────────────────────────────── */
+function setVisibilityAnimated(element, visible, { panel = element, backdrop = null, onHidden } = {}) {
+    if (!element) return;
+    const previous = element._visibilityMotion;
+    if (previous ? previous.visible === visible : element.hidden === !visible) return;
+
+    const targets = [panel, backdrop].filter(Boolean);
+    const animate = !_prefersReducedMotion() && targets.every(target => typeof target.animate === "function");
+    // UI-MOTION: snapshot before cancelling so a quick reversal continues
+    // from the displayed frame instead of jumping to a keyframe endpoint.
+    const starts = animate && !element.hidden ? targets.map(target => {
+        const style = window.getComputedStyle(target);
+        return { opacity: style.opacity, transform: style.transform };
+    }) : [];
+    previous?.cancel();
+
+    const motion = { visible, cancel: () => {} };
+    element._visibilityMotion = motion;
+    element.classList.toggle("is-closing", !visible);
+    element.hidden = false;
+    const finish = () => {
+        if (element._visibilityMotion !== motion) return;
+        element.hidden = !visible;
+        motion.cancel();
+        element._visibilityMotion = null;
+        element.classList.remove("is-closing");
+        if (!visible) onHidden?.();
+    };
+    if (!animate) {
+        finish();
+        return;
+    }
+
+    const style = window.getComputedStyle(element);
+    const duration = Number.parseFloat(style.getPropertyValue(visible ? "--motion-duration-in" : "--motion-duration-out")) || (visible ? 280 : 220);
+    const easing = style.getPropertyValue(visible ? "--motion-easing-in" : "--motion-easing-out").trim() || "ease-out";
+    const offset = `translateY(${style.getPropertyValue("--motion-distance").trim() || "24px"})`;
+    const animations = targets.map((target, index) => {
+        const start = starts[index] || { opacity: 0, transform: target === panel ? offset : "none" };
+        const end = { opacity: visible ? 1 : 0, transform: !visible && target === panel ? offset : "none" };
+        return target.animate([start, end], { duration, easing, fill: "both" });
+    });
+    const timer = setTimeout(finish, duration + 100);
+    motion.cancel = () => {
+        clearTimeout(timer);
+        for (const animation of animations) animation.cancel();
+    };
+    Promise.all(animations.map(animation => animation.finished)).then(finish, () => {});
+}
+
+function _modalMotionParts(modalEl) {
+    let backdrop = modalEl.querySelector(".detail-overlay");
+    if (!backdrop) {
+        backdrop = domEl("div", { className: "detail-overlay", attrs: { "aria-hidden": "true" } });
+        modalEl.appendChild(backdrop);
+    }
+    const panel = modalEl.querySelector(".detail-sheet, .modal-content, .typed-confirm-sheet, .lp-menu-sheet");
+    return { panel, backdrop };
+}
+
 // UX-M2: while a modal is open, mark everything ELSE on the page as
 // ``inert`` so the user can't tab/click through to background chrome
 // and assistive tech doesn't announce a mix of dialog + page. ``inert``
@@ -375,9 +424,7 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
     if (wasHidden && document.activeElement && document.activeElement !== document.body) {
         modalEl._previousFocus = document.activeElement;
     }
-    modalEl._cancelModalClose?.();
-    modalEl.classList.remove("is-closing");
-    modalEl.hidden = false;
+    setVisibilityAnimated(modalEl, true, _modalMotionParts(modalEl));
     if (lockScroll && wasHidden) lockBodyScroll();
     if (wasHidden) {
         // UX-M2: hide the page from assistive tech BEFORE focus moves
@@ -394,16 +441,7 @@ function openModalAnimated(modalEl, { lockScroll = true } = {}) {
 function closeModalAnimated(modalEl, { lockScroll = true, onClosed } = {}) {
     if (!modalEl || modalEl.hidden || modalEl.classList.contains("is-closing")) return;
 
-    // Bottom-sheet modals use `.detail-sheet`; centred dialogs use
-    // `.modal-content`. Either way we wait for the inner panel's
-    // animation to finish before flipping `[hidden]` back.
-    const inner =
-        modalEl.querySelector(".detail-sheet") || modalEl.querySelector(".modal-content");
-    const prefersReducedMotion = _prefersReducedMotion();
-
     const finalize = () => {
-        modalEl.hidden = true;
-        modalEl.classList.remove("is-closing");
         if (lockScroll) unlockBodyScroll();
         if (typeof modalEl._focusTrapCleanup === "function") {
             modalEl._focusTrapCleanup();
@@ -416,34 +454,14 @@ function closeModalAnimated(modalEl, { lockScroll = true, onClosed } = {}) {
         _restoreInertSiblings(modalEl);
         const prev = modalEl._previousFocus;
         if (prev && typeof prev.focus === "function") {
-            try { prev.focus(); } catch (_) { /* element may have been removed */ }
+            try { prev.focus({ preventScroll: true }); } catch (_) { /* element may have been removed */ }
         }
         modalEl._previousFocus = null;
         onClosed?.();
     };
 
-    if (prefersReducedMotion || !inner) {
-        finalize();
-        return;
-    }
-
-    const cancel = () => {
-        clearTimeout(timer);
-        inner.removeEventListener("animationend", onEnd);
-        modalEl._cancelModalClose = null;
-    };
-    const onEnd = (event) => {
-        if (event && event.target !== inner) return;
-        cancel();
-        finalize();
-    };
-    inner.addEventListener("animationend", onEnd);
-
-    modalEl.classList.add("is-closing");
-
-    // Fallback for interrupted animations that never emit animationend.
-    const timer = setTimeout(onEnd, 400);
-    modalEl._cancelModalClose = cancel;
+    const parts = _modalMotionParts(modalEl);
+    setVisibilityAnimated(modalEl, false, { ...parts, onHidden: finalize });
 }
 
 /* ─── Pull-to-refresh (page-level, view-aware) ──────────────────────────
@@ -915,8 +933,6 @@ function attachPinchZoom(img, options) {
 
 let _longPressOverlay = null;
 let _longPressEscHandler = null;
-let _longPressFocusCleanup = null;
-let _longPressPreviousFocus = null;
 
 function _ensureLongPressOverlay() {
     if (_longPressOverlay) return _longPressOverlay;
@@ -924,13 +940,14 @@ function _ensureLongPressOverlay() {
     overlay.className = "lp-menu-overlay";
     overlay.setAttribute("hidden", "");
     overlay.setAttribute("role", "presentation");
+    overlay.appendChild(domEl("div", { className: "detail-overlay", attrs: { "aria-hidden": "true" } }));
     const sheet = document.createElement("div");
     sheet.className = "lp-menu-sheet";
     sheet.setAttribute("role", "menu");
     overlay.appendChild(sheet);
     document.body.appendChild(overlay);
     overlay.addEventListener("click", (event) => {
-        if (event.target === overlay) hideLongPressMenu();
+        if (event.target === overlay || event.target.classList.contains("detail-overlay")) hideLongPressMenu();
     });
     _longPressOverlay = overlay;
     return overlay;
@@ -939,7 +956,6 @@ function _ensureLongPressOverlay() {
 function showLongPressMenu(items) {
     if (!Array.isArray(items) || !items.length) return;
     hideLongPressMenu();
-    _longPressPreviousFocus = document.activeElement;
     const overlay = _ensureLongPressOverlay();
     const sheet = overlay.querySelector(".lp-menu-sheet");
     sheet.replaceChildren();
@@ -1008,48 +1024,33 @@ function showLongPressMenu(items) {
         btn.addEventListener("click", (event) => {
             event.stopPropagation();
             if (btn.disabled) return;
-            hideLongPressMenu();
-            try {
-                if (typeof item.onSelect === "function") item.onSelect();
-            } catch (err) {
-                logClientError("long-press menu action failed", err);
-            }
+            hideLongPressMenu({ onClosed: () => {
+                try {
+                    if (typeof item.onSelect === "function") item.onSelect();
+                } catch (err) {
+                    logClientError("long-press menu action failed", err);
+                }
+            } });
         });
         sheet.appendChild(btn);
     }
-    overlay.removeAttribute("hidden");
-    document.body.classList.add("lp-menu-open");
-    _applyInertToSiblings(overlay);
-    _longPressFocusCleanup = trapFocus(sheet) || null;
+    openModalAnimated(overlay);
     // Esc closes too — reuse the existing modal-close idiom.
     _longPressEscHandler = (event) => {
-        if (event.key === "Escape") hideLongPressMenu();
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        hideLongPressMenu();
     };
-    document.addEventListener("keydown", _longPressEscHandler);
+    document.addEventListener("keydown", _longPressEscHandler, true);
 }
 
-function hideLongPressMenu() {
+function hideLongPressMenu(options) {
     if (!_longPressOverlay) return;
-    const wasOpen = !_longPressOverlay.hasAttribute("hidden");
-    _longPressOverlay.setAttribute("hidden", "");
-    document.body.classList.remove("lp-menu-open");
     if (_longPressEscHandler) {
-        document.removeEventListener("keydown", _longPressEscHandler);
+        document.removeEventListener("keydown", _longPressEscHandler, true);
         _longPressEscHandler = null;
     }
-    if (typeof _longPressFocusCleanup === "function") {
-        _longPressFocusCleanup();
-        _longPressFocusCleanup = null;
-    }
-    _restoreInertSiblings(_longPressOverlay);
-    if (wasOpen && _longPressPreviousFocus?.isConnected) {
-        try {
-            _longPressPreviousFocus.focus({ preventScroll: true });
-        } catch (_) {
-            try { _longPressPreviousFocus.focus(); } catch (_) {}
-        }
-    }
-    _longPressPreviousFocus = null;
+    closeModalAnimated(_longPressOverlay, options);
 }
 
 function attachLongPress(target, getItems, options) {

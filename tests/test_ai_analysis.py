@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -2659,12 +2660,13 @@ def test_repair_truncated_json_handles_truncated_value() -> None:
     assert result.get("title") == "iPhone 14"
 
 
-def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
-    """Listing assistant spends from the assistant quota bucket."""
+def test_rate_limit_uses_shared_rolling_ai_key(monkeypatch) -> None:
+    """Listing assistant spends one unit from the shared rolling AI budget."""
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
     from api.services import ai_analysis_pipeline
+    from api.services.ai_quota import ai_quota_key
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -2728,18 +2730,19 @@ def test_rate_limit_uses_per_endpoint_keys(monkeypatch) -> None:
         assert resp.status_code == 200
 
         keys_in_cache = [k for k in cache._storage if k.startswith("quota:")]
-        assert any(k.startswith("quota:assistant:123456:") for k in keys_in_cache), (
-            f"Expected assistant quota key, got: {keys_in_cache}"
-        )
+        # RV-AI-07: Wave 60ec808 replaced per-endpoint daily counters with
+        # one rolling budget shared by analysis and the seller assistant.
+        assert keys_in_cache == [ai_quota_key(123456)]
+        assert len(json.loads(cache._storage[keys_in_cache[0]][0])) == 1
 
 
-def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
-    """Status quota blocks requests after the assistant bucket limit."""
+def test_rate_limit_rolling_cap_blocks_after_limit(monkeypatch) -> None:
+    """The assistant enforces the shared five-hour budget before AI runs."""
     from api.dependencies import get_telegram_user
     from api.main import create_app
     from api.routers import ai_analysis
-    from api.services import ai_analysis_pipeline
-    from api.services.account_status import QUOTA_BUCKET_ASSISTANT, quota_key
+    from api.services import ai_analysis_pipeline, ai_guards
+    from api.services.ai_quota import ai_quota_key
     from api.services.cache import MemoryCache
 
     async def fake_load_query_dataset(**kwargs):
@@ -2778,6 +2781,10 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
     monkeypatch.setattr(_la, "_check_ai_available", lambda: fake_ai)
     monkeypatch.setattr(_la, "load_query_dataset", fake_load_query_dataset)
 
+    async def quota_limits(request, user_id):
+        return 1, 3
+
+    monkeypatch.setattr(ai_guards, "_status_quota_limits", quota_limits)
     app = create_app()
     app.dependency_overrides[get_telegram_user] = fake_telegram_user
     _grant_ai_access()
@@ -2788,16 +2795,23 @@ def test_rate_limit_daily_cap_blocks_after_limit(monkeypatch) -> None:
         monkeypatch.setattr(ai_analysis, "get_cache", lambda r: cache)
         monkeypatch.setattr(_la, "get_cache", lambda r: cache)
 
-        cache._storage[quota_key(QUOTA_BUCKET_ASSISTANT, 123456)] = ("100", 0.0)
+        # RV-AI-07: preload a live rolling charge rather than the retired
+        # daily assistant counter, which the current guard never reads.
+        cache._storage[ai_quota_key(123456)] = (
+            json.dumps({"spent": datetime.now(UTC).timestamp()}), 0.0,
+        )
 
         resp = client.post(
             "/api/v1/ai/listing-assistant",
-            json={"title": "Test daily cap"},
+            json={"title": "Test rolling cap"},
         )
         assert resp.status_code == 429
         detail = resp.json()["detail"]
         assert detail["error"] == "quota_exceeded"
-        assert detail["bucket"] == "assistant"
+        assert detail["bucket"] == "ai"
+        assert detail["window"] == "5h"
+        assert detail["used"] == detail["limit"] == 1
+        assert int(resp.headers["Retry-After"]) > 0
 
 
 @pytest.mark.asyncio

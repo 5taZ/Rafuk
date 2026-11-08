@@ -492,7 +492,7 @@ function createApiTrackers(context) {
     elements.closeEditModal?.addEventListener("click", () => closeEditTracker());
     elements.cancelEditBtn?.addEventListener("click", () => closeEditTracker());
     elements.editTrackerModal?.addEventListener("click", (event) => {
-        if (event.target === elements.editTrackerModal) closeEditTracker();
+        if (event.target === elements.editTrackerModal || event.target.classList.contains("detail-overlay")) closeEditTracker();
     });
 
     return {
