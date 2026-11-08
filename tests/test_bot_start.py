@@ -49,6 +49,35 @@ async def test_cmd_start_resumes_only_bot_blocked_trackers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cmd_start_resumes_bot_blocked_trackers_only_within_role_limit(monkeypatch) -> None:
+    from sqlalchemy import select
+
+    from api.database import get_engine, get_session_factory
+    from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
+
+    factory = get_session_factory(get_engine())
+    monkeypatch.setattr("bot.handlers.start.get_bot_session_factory", lambda: factory)
+    async with factory() as session:
+        session.add(User(id=7001, telegram_user_id=7001, first_name="Тест"))
+        await session.flush()
+        session.add_all([
+            Tracker(user_id=7001, query="running"),
+            *(Tracker(
+                user_id=7001, query=f"blocked {i}", paused=True,
+                pause_reason=TRACKER_PAUSE_REASON_BOT_BLOCKED,
+            ) for i in range(4)),
+        ])
+        await session.commit()
+
+    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=7001))
+    await cmd_start(message)  # type: ignore[arg-type]
+    await cmd_start(message)  # type: ignore[arg-type]
+    async with factory() as session:
+        rows = (await session.execute(select(Tracker).order_by(Tracker.id))).scalars().all()
+    assert [row.paused for row in rows] == [False, False, False, True, True]
+
+
+@pytest.mark.asyncio
 async def test_cmd_start_message_is_in_russian() -> None:
     """Bot greetings used to mix Russian + English ('Rafuk helps you...');
     the whole UX is Russian, so /start must answer in Russian too."""

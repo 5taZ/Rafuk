@@ -86,6 +86,7 @@ from api.services.kufar_client import KufarAPIError, KufarClient, KufarUnavailab
 from api.services.listing_mapper import first_image_url, iter_image_urls
 from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
+from api.services.tracker_limits import pause_excess_trackers
 from bot.keyboards import (
     enhanced_alert_keyboard,
     inline_keyboard_from_json,
@@ -885,6 +886,8 @@ async def _check_trackers_inner(
     deadline: float,
 ) -> None:
     async with session_factory() as session:
+        if await pause_excess_trackers(session):
+            await session.commit()
         # BE-03 / INF-05: previously this loaded every active+unpaused
         # tracker into memory and filtered on `interval_min` in Python.
         # With 10k+ trackers that's tens of MB and a lot of GC pressure

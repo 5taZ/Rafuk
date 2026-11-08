@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 
 from api.config import get_settings
 from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
+from api.services.tracker_limits import get_tracker_capacity
 from bot.database import get_bot_session_factory
 from bot.keyboards import mini_app_keyboard
 
@@ -31,15 +32,23 @@ async def _resume_bot_blocked_trackers(message: Message) -> None:
     try:
         session_factory = get_bot_session_factory()
         async with session_factory() as session:
-            internal_id = (
-                select(User.id)
-                .where(User.telegram_user_id == from_user.id)
-                .scalar_subquery()
+            internal_id = await session.scalar(
+                select(User.id).where(User.telegram_user_id == from_user.id)
             )
+            if internal_id is None:
+                return
+            used, limit = await get_tracker_capacity(session, internal_id)
+            resumable = select(Tracker.id).where(
+                Tracker.user_id == internal_id,
+                Tracker.active.is_(True),
+                Tracker.paused.is_(True),
+                Tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED,
+            ).order_by(Tracker.created_at, Tracker.id).limit(max(0, limit - used))
+            tracker_ids = (await session.execute(resumable)).scalars().all()
             result = await session.execute(
                 update(Tracker)
                 .where(
-                    Tracker.user_id == internal_id,
+                    Tracker.id.in_(tracker_ids),
                     Tracker.active.is_(True),
                     Tracker.paused.is_(True),
                     Tracker.pause_reason == TRACKER_PAUSE_REASON_BOT_BLOCKED,

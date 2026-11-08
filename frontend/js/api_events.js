@@ -469,13 +469,15 @@ function createApiEvents(context) {
             const code = card.dataset.statusCode || "";
             const aiLimit = Number(card.querySelector("[data-admin-status-ai]")?.value || 0);
             const assistantLimit = Number(card.querySelector("[data-admin-status-assistant]")?.value || 0);
-            if (!Number.isInteger(aiLimit) || !Number.isInteger(assistantLimit) || aiLimit < 0 || assistantLimit < 0) {
-                showToast("Лимиты должны быть целыми числами от 0", "error");
+            const trackerLimit = Number(card.querySelector("[data-admin-status-trackers]")?.value || 0);
+            if (![aiLimit, assistantLimit, trackerLimit].every((limit) => Number.isInteger(limit) && limit >= 0 && limit <= 10000)) {
+                showToast("Лимиты должны быть целыми числами от 0 до 10000", "error");
                 return;
             }
             void updateStatusLimits(code, {
                 ai_daily_limit: aiLimit,
                 assistant_daily_limit: assistantLimit,
+                max_trackers: trackerLimit,
             });
         });
     }

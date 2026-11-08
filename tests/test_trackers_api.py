@@ -893,3 +893,95 @@ def test_resume_tracker_allowed_with_consent_or_without_revoke(
     assert resp.status_code == 200
     assert resp.json()["paused"] is False
     assert _tracker_states() == [(False, None)]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "limit", "expired", "custom_limit"),
+    [
+        ("bare_search", 3, False, None),
+        ("scout", 10, False, None),
+        ("flipper", 10, False, None),
+        ("shark", 10, False, None),
+        ("market_maker", 10, False, None),
+        ("market_maker", 3, True, None),
+        ("bare_search", 2, False, 2),
+        ("scout", 0, False, 0),
+    ],
+)
+def test_tracker_concurrent_limit_uses_effective_role(
+    status_code: str, limit: int, expired: bool, custom_limit: int | None,
+) -> None:
+    from api.models import AccountStatus, User
+
+    with _trackers_client() as client:
+        async def seed() -> None:
+            async with client.app.state.session_factory() as session:
+                user = User(
+                    telegram_user_id=123456, first_name="Test", account_status_code=status_code,
+                    status_expires_at=datetime.now(UTC) - timedelta(days=1) if expired else None,
+                )
+                session.add(user)
+                await session.flush()
+                if custom_limit is not None:
+                    role = await session.get(AccountStatus, status_code)
+                    role.max_trackers = custom_limit
+                session.add_all([
+                    *(Tracker(user_id=user.id, query=f"running {i}")
+                      for i in range(max(0, limit - 1))),
+                    Tracker(user_id=user.id, query="paused", paused=True),
+                    Tracker(user_id=user.id, query="deleted", active=False),
+                ])
+                await session.commit()
+
+        client.portal.call(seed)
+        if limit:
+            allowed = client.post("/api/v1/trackers", json={"query": "last slot"})
+            assert allowed.status_code == 201, allowed.text
+        refused = client.post("/api/v1/trackers", json={"query": "one too many"})
+        assert refused.status_code == 429
+        assert f": {limit}." in refused.json()["detail"]
+
+
+def test_tracker_pause_delete_and_resume_share_concurrent_limit() -> None:
+    with _trackers_client() as client:
+        ids = []
+        for i in range(3):
+            resp = client.post("/api/v1/trackers", json={"query": f"tracker {i}"})
+            assert resp.status_code == 201, resp.text
+            ids.append(resp.json()["id"])
+        assert client.post(f"/api/v1/trackers/{ids[0]}/pause").status_code == 200
+        extra = client.post("/api/v1/trackers", json={"query": "replacement"})
+        assert extra.status_code == 201
+        assert client.post(f"/api/v1/trackers/{ids[0]}/resume").status_code == 429
+        assert client.delete(f"/api/v1/trackers/{ids[1]}").status_code == 204
+        assert client.post(f"/api/v1/trackers/{ids[0]}/resume").status_code == 200
+        assert client.post(f"/api/v1/trackers/{ids[0]}/resume").status_code == 200
+        assert client.post("/api/v1/trackers/999999/resume").status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_expired_subscription_pauses_excess_trackers() -> None:
+    from sqlalchemy import select
+
+    from api.models import User
+    from api.services.tracker_limits import pause_excess_trackers
+
+    engine = get_engine()
+    try:
+        async with get_session_factory(engine)() as session:
+            user = User(
+                telegram_user_id=123456, first_name="Expired", account_status_code="scout",
+                status_expires_at=datetime.now(UTC) - timedelta(days=1),
+            )
+            session.add(user)
+            await session.flush()
+            session.add_all(Tracker(user_id=user.id, query=f"tracker {i}") for i in range(5))
+            await session.commit()
+            assert await pause_excess_trackers(session) == 2
+            await session.commit()
+            rows = (await session.execute(select(Tracker).order_by(Tracker.id))).scalars().all()
+            assert [row.paused for row in rows] == [False, False, False, True, True]
+            assert [row.pause_reason for row in rows[3:]] == ["plan_limit", "plan_limit"]
+            assert await pause_excess_trackers(session) == 0
+    finally:
+        await engine.dispose()

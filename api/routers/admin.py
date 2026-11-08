@@ -36,6 +36,7 @@ from api.services.account_status import (
 )
 from api.services.cache import CacheBackend
 from api.services.client_ip import get_client_ip
+from api.services.tracker_limits import pause_excess_trackers
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -124,6 +125,7 @@ async def update_admin_user_status(
         target.status_granted_at = now
         target.status_expires_at = _normalize_admin_datetime(payload.expires_at)
         target.status_note = payload.note
+        await pause_excess_trackers(session, user_id=target.id)
         new = _user_status_payload(target)
         session.add(AdminAuditLog(
             actor_user_id=actor.id,
@@ -171,6 +173,9 @@ async def update_admin_status_limits(
         old = _status_limit_payload(status)
         status.ai_daily_limit = payload.ai_daily_limit
         status.assistant_daily_limit = payload.assistant_daily_limit
+        if payload.max_trackers is not None:
+            status.max_trackers = payload.max_trackers
+            await pause_excess_trackers(session)
         new = _status_limit_payload(status)
         session.add(AdminAuditLog(
             actor_user_id=actor.id,
@@ -301,6 +306,7 @@ def _status_limit_payload(status: AccountStatus) -> dict[str, int]:
     return {
         "ai_daily_limit": int(status.ai_daily_limit),
         "assistant_daily_limit": int(status.assistant_daily_limit),
+        "max_trackers": int(status.max_trackers),
     }
 
 

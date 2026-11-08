@@ -145,7 +145,9 @@ function createRenderTrackers(context) {
         const filters = trackerFilters(tracker);
         const checked = relativeTime(tracker.last_checked_at);
         const lastEvent = relativeTime(tracker.last_event_at);
-        const pauseState = tracker.paused ? "На паузе" : "Активен";
+        const pauseState = tracker.paused
+            ? (tracker.pause_reason === "plan_limit" ? "Пауза: лимит тарифа" : "На паузе")
+            : "Активен";
         const eventsButton = domEl("button", {
             className: "ghost-btn tracker-action-primary",
             type: "button",

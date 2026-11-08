@@ -37,6 +37,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "sort_order": 10,
         "ai_daily_limit": 0,
         "assistant_daily_limit": 0,
+        "max_trackers": 3,
     },
     {
         "code": "scout",
@@ -46,6 +47,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "sort_order": 20,
         "ai_daily_limit": 10,
         "assistant_daily_limit": 3,
+        "max_trackers": 10,
     },
     {
         "code": "flipper",
@@ -55,6 +57,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "sort_order": 30,
         "ai_daily_limit": 40,
         "assistant_daily_limit": 12,
+        "max_trackers": 10,
     },
     {
         "code": "shark",
@@ -64,6 +67,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "sort_order": 40,
         "ai_daily_limit": 120,
         "assistant_daily_limit": 35,
+        "max_trackers": 10,
     },
     {
         "code": "market_maker",
@@ -73,6 +77,7 @@ ACCOUNT_STATUS_SEED_ROWS: tuple[dict[str, object], ...] = (
         "sort_order": 50,
         "ai_daily_limit": 300,
         "assistant_daily_limit": 100,
+        "max_trackers": 10,
     },
 )
 
@@ -91,6 +96,9 @@ class AccountStatus(Base):
     assistant_daily_limit: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0",
     )
+    max_trackers: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10",
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -108,6 +116,10 @@ class AccountStatus(Base):
         CheckConstraint(
             "assistant_daily_limit >= 0 AND assistant_daily_limit <= 10000",
             name="chk_account_statuses_assistant_daily_limit_bounds",
+        ),
+        CheckConstraint(
+            "max_trackers >= 0 AND max_trackers <= 10000",
+            name="chk_account_statuses_max_trackers_bounds",
         ),
         Index("idx_account_statuses_sort_order", "sort_order"),
     )

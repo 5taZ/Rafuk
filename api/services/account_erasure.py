@@ -78,6 +78,7 @@ _ADMIN_AUDIT_RETAINED_KEYS = frozenset({
     "expires_at",
     "ai_daily_limit",
     "assistant_daily_limit",
+    "max_trackers",
 })
 
 

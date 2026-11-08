@@ -8,13 +8,13 @@ from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.config import get_settings
 from api.dependencies import get_session_factory_dependency, get_telegram_user
 from api.limiter import limiter
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import QueryListingState, Tracker, TrackerEvent, User, UserConsent
+from api.models import QueryListingState, Tracker, TrackerEvent, UserConsent
 from api.schemas import TrackerCreate, TrackerEventRead, TrackerRead, TrackerUpdate
 from api.services.aggregator import build_query_key
+from api.services.tracker_limits import require_tracker_capacity
 from api.services.workflow_store import ensure_user, resolve_user_id
 
 router = APIRouter(tags=["trackers"])
@@ -260,7 +260,6 @@ async def create_tracker(
         )
 
     async with session_factory() as session:
-        # Per-user tracker limit to prevent amplification attacks
         user_id = await ensure_user(
             session,
             telegram_user_id=telegram_user.user_id,
@@ -268,31 +267,7 @@ async def create_tracker(
         )
         await _require_pd_processing_consent(session, user_id)
 
-        # BE-M16: serialise concurrent tracker-create for the same user
-        # by taking a row-level FOR UPDATE lock on the User row before
-        # we count + insert. Without it, two simultaneous requests could
-        # both observe ``existing_count == max - 1``, both pass the
-        # check, and both insert — leaving the user one tracker over
-        # the configured limit. ``with_for_update`` is a no-op on
-        # SQLite (no row-level locking) so the test-suite still works;
-        # on Postgres the second concurrent request blocks here until
-        # the first commits, then sees the updated count.
-        await session.scalar(
-            select(User.id).where(User.id == user_id).with_for_update()
-        )
-
-        max_trackers_per_user = get_settings().max_trackers_per_user
-        existing_count = await session.scalar(
-            select(func.count(Tracker.id)).where(
-                Tracker.user_id == user_id,
-                Tracker.active.is_(True),
-            )
-        )
-        if (existing_count or 0) >= max_trackers_per_user:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Maximum {max_trackers_per_user} trackers per user",
-            )
+        await require_tracker_capacity(session, user_id)
 
         tracker = Tracker(
             user_id=user_id,
@@ -480,6 +455,7 @@ async def resume_tracker(
             user_id,
             paused_by_revoke=tracker.pause_reason == _CONSENT_REVOKED_PAUSE_REASON,
         )
+        await require_tracker_capacity(session, user_id, exclude_tracker_id=tracker.id)
 
         tracker.paused = False
         tracker.paused_at = None

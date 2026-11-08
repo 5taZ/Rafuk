@@ -279,6 +279,18 @@ function createRenderAdmin(context) {
                         dataset: { adminStatusAssistant: "" },
                     }),
                 ),
+                domEl(
+                    "label",
+                    { className: "admin-field" },
+                    domEl("span", { className: "admin-field-label", text: "Автотрекеры одновременно" }),
+                    domEl("input", {
+                        className: "admin-input mono",
+                        type: "number",
+                        value: Number(status.max_trackers ?? 0),
+                        attrs: { min: "0", max: "10000", step: "1", inputmode: "numeric" },
+                        dataset: { adminStatusTrackers: "" },
+                    }),
+                ),
                 domEl("button", {
                     className: "primary-btn small admin-status-save",
                     type: "button",

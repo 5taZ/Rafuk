@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -354,6 +355,7 @@ def test_admin_can_get_status_list() -> None:
     assert [item["display_name"] for item in resp.json()] == [
         "Free", "Pro", "Pro Max", "Pro Max Ultra", "Pro Max Ultra Max",
     ]
+    assert [item["max_trackers"] for item in resp.json()] == [3, 10, 10, 10, 10]
 
 
 def test_admin_can_change_status_limits() -> None:
@@ -362,7 +364,7 @@ def test_admin_can_change_status_limits() -> None:
     with TestClient(app) as client:
         resp = client.patch(
             "/api/v1/admin/statuses/scout",
-            json={"ai_daily_limit": 11, "assistant_daily_limit": 4},
+            json={"ai_daily_limit": 11, "assistant_daily_limit": 4, "max_trackers": 7},
         )
 
     assert resp.status_code == 200, resp.text
@@ -370,6 +372,7 @@ def test_admin_can_change_status_limits() -> None:
     assert body["code"] == "scout"
     assert body["ai_daily_limit"] == 11
     assert body["assistant_daily_limit"] == 4
+    assert body["max_trackers"] == 7
 
     from api.database import get_engine, get_session_factory
     from api.models import AccountStatus
@@ -386,6 +389,7 @@ def test_admin_can_change_status_limits() -> None:
     status = asyncio.run(_read_status())
     assert status.ai_daily_limit == 11
     assert status.assistant_daily_limit == 4
+    assert status.max_trackers == 7
 
 
 def test_admin_cannot_change_unknown_status_code() -> None:
@@ -415,6 +419,58 @@ def test_admin_cannot_set_status_limits_outside_allowed_range() -> None:
 
     assert too_low.status_code == 422
     assert too_high.status_code == 422
+
+
+@pytest.mark.parametrize("invalid", [-1, 10001, 1.5, True, "3"])
+def test_admin_rejects_invalid_tracker_limit(invalid) -> None:
+    with TestClient(_admin_app(_ADMIN_TG_ID)) as client:
+        resp = client.patch("/api/v1/admin/statuses/scout", json={
+            "ai_daily_limit": 10, "assistant_daily_limit": 3, "max_trackers": invalid,
+        })
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("change_role", [False, True])
+def test_admin_reduced_tracker_limit_pauses_excess_without_deleting(change_role: bool) -> None:
+    from api.models import Tracker, User
+
+    _seed_users({
+        "telegram_user_id": _USER_TG_ID, "first_name": "Target", "account_status_code": "scout",
+    })
+    with TestClient(_admin_app(_ADMIN_TG_ID)) as client:
+        client.app.state.cache = MemoryCache()
+
+        async def seed() -> None:
+            async with client.app.state.session_factory() as session:
+                user_id = await session.scalar(
+                    select(User.id).where(User.telegram_user_id == _USER_TG_ID)
+                )
+                session.add_all(Tracker(user_id=user_id, query=f"tracker {i}") for i in range(5))
+                await session.commit()
+
+        client.portal.call(seed)
+        if change_role:
+            resp = client.patch(f"/api/v1/admin/users/{_USER_TG_ID}/status", json={
+                "status_code": "bare_search",
+            })
+            expected = 3
+        else:
+            resp = client.patch("/api/v1/admin/statuses/scout", json={
+                "ai_daily_limit": 10, "assistant_daily_limit": 3, "max_trackers": 2,
+            })
+            expected = 2
+        assert resp.status_code == 200, resp.text
+
+        async def read():
+            async with client.app.state.session_factory() as session:
+                rows = await session.execute(select(Tracker).order_by(Tracker.id))
+                return rows.scalars().all()
+
+        rows = client.portal.call(read)
+        assert len(rows) == 5
+        assert all(row.active for row in rows)
+        assert sum(not row.paused for row in rows) == expected
+        assert all(row.pause_reason == "plan_limit" for row in rows[expected:])
 
 
 def test_regular_user_gets_403_on_admin_patch_endpoints() -> None:

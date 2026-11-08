@@ -429,6 +429,7 @@ class TrackerRead(BaseModel):
     # Pause support
     paused: bool = False
     paused_at: datetime | None = None
+    pause_reason: str | None = None
     # Computed stats (not stored in DB, added by API)
     event_count: int = 0
     new_listings_count: int = 0
@@ -756,6 +757,7 @@ class AccountStatusRead(BaseModel):
     sort_order: int
     ai_daily_limit: int
     assistant_daily_limit: int
+    max_trackers: int
     updated_at: datetime
 
 
@@ -827,6 +829,7 @@ class AdminStatusLimitUpdate(BaseModel):
 
     ai_daily_limit: int = Field(ge=0, le=10_000, strict=True)
     assistant_daily_limit: int = Field(ge=0, le=10_000, strict=True)
+    max_trackers: int | None = Field(default=None, ge=0, le=10_000, strict=True)
 
 
 class AdminAuditRead(BaseModel):
