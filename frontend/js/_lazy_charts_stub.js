@@ -14,7 +14,7 @@
  */
 /* global window */
 
-const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261108-unified-motion";
+const _LAZY_CHARTS_RENDER_URL = "js/render_charts.js?v=20261108-expenses-steady";
 
 function _lazyLoadChartsSources(context) {
     if (_loadPromises.has("charts")) return _loadPromises.get("charts");

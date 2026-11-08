@@ -410,18 +410,18 @@ function createRenderModals(context) {
     function renderExpensesModal() {
         return safeRender('renderExpensesModal', () => {
             if (!elements.expensesModal) return;
+            elements.expensesList.setAttribute("aria-busy", String(state.expenses.loading));
+            if (state.expenses.loading && state.expenses.items.length) return;
             domClear(elements.expensesList);
 
         // Show loading state
         if (state.expenses.loading) {
-            const loader = document.createElement("div");
-            loader.className = "expenses-loading";
-            for (let i = 0; i < 3; i++) {
-                const row = document.createElement("div");
-                row.className = "skeleton-expense-row";
-                loader.appendChild(row);
-            }
-            elements.expensesList.appendChild(loader);
+            // UI-MOTION: match the empty state's geometry without a flashing skeleton.
+            const pending = document.createElement("p");
+            pending.className = "tracker-empty";
+            pending.textContent = "\u00a0";
+            pending.setAttribute("aria-hidden", "true");
+            elements.expensesList.appendChild(pending);
             return;
         }
 
