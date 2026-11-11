@@ -242,6 +242,9 @@ class Settings(BaseSettings):
     # BOT_TOKEN-derived key when unset.
     audit_hash_secret: SecretStr | None = Field(default=None, alias="AUDIT_HASH_SECRET")
     admin_telegram_user_ids: str = ""
+    # Rafuk opens only to subscribers of this channel (bot /start and the
+    # Mini App API); empty turns the gate off. The bot must be its admin.
+    required_channel: str = "@RafuksToResell"
 
     # Image proxy (WebP/AVIF transcode of Kufar JPEGs).
     image_proxy_enabled: bool = True

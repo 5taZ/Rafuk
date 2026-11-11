@@ -9,8 +9,10 @@ from sqlalchemy import select
 from api.models import TrackerEvent, User
 from bot.api_client import _api_post
 from bot.database import get_bot_session_factory
+from bot.subscription import SubscriptionGateMiddleware
 
 router = Router(name="callbacks")
+router.callback_query.middleware(SubscriptionGateMiddleware())
 
 
 async def _resolve_listing_context(

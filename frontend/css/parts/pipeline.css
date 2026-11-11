@@ -405,6 +405,9 @@
 }
 
 .wl-status-select option {
+    /* Light text needs the theme background too: the native dropdown in
+       Telegram's WebView otherwise paints it on system white. */
+    background-color: var(--bg-elevated);
     color: var(--text);
 }
 

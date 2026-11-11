@@ -4,23 +4,28 @@ import logging
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from aiogram import Router
-from aiogram.filters import CommandObject, CommandStart
-from aiogram.types import Message
+from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy import select, update
 
 from api.config import get_settings
 from api.models import TRACKER_PAUSE_REASON_BOT_BLOCKED, Tracker, User
 from api.services.tracker_limits import get_tracker_capacity
 from bot.database import get_bot_session_factory
-from bot.keyboards import mini_app_keyboard
+from bot.keyboards import SUBSCRIPTION_CHECK_PREFIX, mini_app_keyboard
+from bot.subscription import SubscriptionGateMiddleware, check_subscription, not_subscribed_alert
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="start")
+router.message.middleware(SubscriptionGateMiddleware())
+# «Я подписался» must stay reachable for those the gate above stops.
+subscription_router = Router(name="subscription")
 
 
-async def _resume_bot_blocked_trackers(message: Message) -> None:
+async def _resume_bot_blocked_trackers(message: Message | CallbackQuery) -> None:
     """RV-SCH-03: /start means the chat is reachable again — lift the
     pause the scheduler put on this user's trackers when Telegram
     refused delivery (bot blocked / Start never pressed). Best-effort:
@@ -104,7 +109,6 @@ def _safe_start_param(raw: str | None) -> str | None:
 async def cmd_start_deep(message: Message, command: CommandObject) -> None:
     """Handle /start with a deep link parameter (e.g. /start tracking)."""
     await _resume_bot_blocked_trackers(message)
-    settings = get_settings()
     # PR-08: ``command.args`` is whatever the user typed after
     # ``/start`` (or what landed in a t.me/<bot>?start=... link). The
     # previous shape concatenated it verbatim into the Mini-App URL,
@@ -113,7 +117,12 @@ async def cmd_start_deep(message: Message, command: CommandObject) -> None:
     # set of view names; URL-encode whatever survives belt-and-
     # suspenders (the allowlist already guarantees safe characters,
     # but the encode keeps the call honest if the list ever grows).
-    deep_param = _safe_start_param(command.args)
+    text, keyboard = _deep_link_reply(_safe_start_param(command.args))
+    await message.answer(text, reply_markup=keyboard)
+
+
+def _deep_link_reply(deep_param: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
+    settings = get_settings()
     view, label = _START_PARAM_VIEWS.get(deep_param, (None, "мини-апп"))
     url = settings.mini_app_url
     if view and url.startswith("https://"):
@@ -121,22 +130,60 @@ async def cmd_start_deep(message: Message, command: CommandObject) -> None:
         url = f"{url}{sep}start_param={quote(view, safe='')}"
     keyboard = mini_app_keyboard(url)
     if keyboard is None:
-        await message.answer(
+        return (
             "Rafuk — аналитика Kufar.\n"
             "Мини-апп отключён локально — Telegram WebApp требует HTTPS."
-        )
-        return
-    await message.answer(f"Открыть «{label}» в Rafuk.", reply_markup=keyboard)
+        ), None
+    return f"Открыть «{label}» в Rafuk.", keyboard
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await _resume_bot_blocked_trackers(message)
-    settings = get_settings()
-    keyboard = mini_app_keyboard(settings.mini_app_url)
+    await _send_greeting(message)
+
+
+# Older greetings, still in users' chats, point at /help; it gets the same
+# answer as /start instead of silence. The other retired commands stay off.
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await _send_greeting(message)
+
+
+async def _send_greeting(message: Message) -> None:
+    text, keyboard = _greeting()
+    await message.answer(text, reply_markup=keyboard)
+
+
+def _greeting() -> tuple[str, InlineKeyboardMarkup | None]:
+    keyboard = mini_app_keyboard(get_settings().mini_app_url)
     text = "Rafuk — цены, объявления и автопоиск на Kufar."
     if keyboard is None:
         text += (
             "\nКнопка мини-аппа отключена локально — Telegram WebApp требует HTTPS."
         )
-    await message.answer(text, reply_markup=keyboard)
+    return text, keyboard
+
+
+@subscription_router.callback_query(
+    (F.data == SUBSCRIPTION_CHECK_PREFIX) | F.data.startswith(f"{SUBSCRIPTION_CHECK_PREFIX}:")
+)
+async def cb_check_subscription(callback: CallbackQuery) -> None:
+    subscribed, channel = await check_subscription(callback.from_user.id)
+    if not subscribed:
+        await callback.answer(not_subscribed_alert(channel), show_alert=True)
+        return
+    await callback.answer("Подписка подтверждена ✅")
+    await _resume_bot_blocked_trackers(callback)
+    deep_param = _safe_start_param(callback.data.partition(":")[2])
+    text, keyboard = _deep_link_reply(deep_param) if deep_param else _greeting()
+    text = f"✅ Подписка подтверждена — добро пожаловать!\n\n{text}"
+    message = callback.message
+    if isinstance(message, Message):
+        try:
+            await message.edit_text(text, reply_markup=keyboard)
+            return
+        except TelegramBadRequest:
+            logger.debug("Subscription welcome could not be edited", exc_info=True)
+    if callback.bot is not None:
+        await callback.bot.send_message(callback.from_user.id, text, reply_markup=keyboard)

@@ -34,7 +34,7 @@ async def test_notification_formats_title_and_price_without_interpreting_listing
         "link_preview_options": LinkPreviewOptions(is_disabled=True),
     }
     if not legacy:
-        assert "<b>1\u00a0120,25 BYN</b>\nНа 12,5% ниже медианы" in args[1]
+        assert "<b>1\u00a0120,25 BYN</b>\n−12% к медиане" in args[1]
 
 
 async def test_price_drop_exposes_current_previous_and_relative_prices():

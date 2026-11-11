@@ -19,6 +19,7 @@ from api.services.account_erasure import (
 )
 from api.services.account_status import is_admin_user
 from api.services.cache import CacheBackend
+from api.services.channel_subscription import require_channel_subscription
 from api.services.client_ip import get_client_ip
 from api.services.currency_service import CurrencyService
 from api.services.kufar_client import KufarClient
@@ -205,6 +206,11 @@ async def get_telegram_user(
     if await is_erased_session(cache, user.user_id, init_data_auth_date(user)):
         logger.info("Refused pre-deletion initData for telegram_user_id=%s", user.user_id)
         raise account_deleted_error()
+
+    # The chat menu button opens the Mini App without the bot's /start
+    # gate, so the API checks the channel subscription itself. Before the
+    # state is set: the auto-provision middleware skips refused users.
+    await require_channel_subscription(cache, settings, user.user_id)
 
     # SEC-H1: track first-seen IP per initData and log on mismatch.
     # We can't outright reject replay (the Mini App genuinely reuses

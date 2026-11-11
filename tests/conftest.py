@@ -24,6 +24,9 @@ os.environ["ENV"] = "test"
 os.environ["DEBUG"] = "true"
 os.environ["AUTH_BYPASS"] = "true"
 os.environ["AUTH_BYPASS_CONFIRM_RISK"] = "true"
+# The channel-subscription gate would call Telegram; tests that cover it
+# set REQUIRED_CHANNEL themselves.
+os.environ["REQUIRED_CHANNEL"] = ""
 os.environ.setdefault("BOT_TOKEN", "7123456789:AAFtesttoken")
 os.environ.setdefault("DATABASE_URL", os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"))
 # RV-OPS-04: forced, not setdefault — api.limiter builds its storage from
@@ -60,6 +63,7 @@ def configure_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # DATABASE_URL, so this is dev/test-only by construction.
     monkeypatch.setenv("AUTH_BYPASS", "true")
     monkeypatch.setenv("AUTH_BYPASS_CONFIRM_RISK", "true")
+    monkeypatch.setenv("REQUIRED_CHANNEL", "")
 
     try:
         from api.config import get_settings

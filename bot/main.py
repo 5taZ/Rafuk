@@ -18,10 +18,12 @@ from sqlalchemy import text
 from api.config import get_settings
 from api.healthcheck import start_health_server, stop_health_server
 from api.logging_config import configure_logging
+from api.services.channel_subscription import fetch_channel_membership, required_channel
 from bot.api_client import close_http_client
 from bot.database import close_bot_engine, get_bot_engine, init_bot_engine
 from bot.handlers.callbacks import router as callbacks_router
 from bot.handlers.start import router as start_router
+from bot.handlers.start import subscription_router
 
 # INF-H9: structured JSON logging (or LOG_FORMAT=text for local). Runs
 # before the bot spins up routers so their @router.message handlers
@@ -34,6 +36,7 @@ def build_dispatcher() -> Dispatcher:
     # TG-03: web_app buttons in /start replies require a private chat.
     dispatcher.message.filter(F.chat.type == ChatType.PRIVATE)
     dispatcher.include_router(start_router)
+    dispatcher.include_router(subscription_router)
     dispatcher.include_router(callbacks_router)
     return dispatcher
 
@@ -53,6 +56,24 @@ async def configure_bot_menu(bot: Bot, mini_app_url: str) -> None:
         else MenuButtonDefault()
     )
     await bot.set_chat_menu_button(menu_button=menu_button)
+
+
+async def check_required_channel_access(bot_token: str, channel: str) -> bool | None:
+    """Log at startup whether Telegram lets the bot read the required
+    channel's members — it does only for channel admins, and without that
+    the subscription gate fails open (see api/services/channel_subscription)."""
+    if not channel:
+        return None
+    bot_id = int(bot_token.split(":", 1)[0])
+    member = await fetch_channel_membership(bot_token, channel, bot_id)
+    if member:
+        logger.info("Subscription gate active for @%s", channel)
+    else:
+        logger.error(
+            "Subscription gate for @%s is OPEN: add the bot to the channel as an administrator",
+            channel,
+        )
+    return member
 
 
 async def _bot_readiness() -> bool:
@@ -81,6 +102,9 @@ async def main() -> None:
     await init_bot_engine()
     bot = Bot(settings.bot_token.get_secret_value())
     await configure_bot_menu(bot, settings.mini_app_url)
+    await check_required_channel_access(
+        settings.bot_token.get_secret_value(), required_channel(settings),
+    )
     # INF-H6: run a tiny HTTP health server on a side port so Docker
     # can probe liveness/readiness directly instead of relying on
     # `pgrep python`, which only proves the interpreter exists — not

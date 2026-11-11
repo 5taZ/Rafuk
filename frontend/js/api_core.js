@@ -101,6 +101,13 @@ function createApiCore(context) {
             err.accountDeleted = true;
             throw err;
         }
+        // Behind the subscription screen nothing else may load; the
+        // screen's «Я подписался» reloads the app.
+        if (state?.ui?.subscriptionRequired) {
+            const err = new Error("Подпишитесь на канал, чтобы пользоваться Rafuk.");
+            err.subscriptionRequired = true;
+            throw err;
+        }
         const method = (options.method || "GET").toUpperCase();
         // FE-H7: X-Requested-With header on every state-changing call.
         // HTML forms and <img>/<link> tags can't set custom headers, so
@@ -243,6 +250,13 @@ function createApiCore(context) {
                 err.detail = detailPayload;
                 err.errorCode = detailPayload.error || "";
                 err.bucket = detailPayload.bucket || "";
+            }
+            if (err.status === 403 && err.errorCode === "subscription_required") {
+                err.subscriptionRequired = true;
+                if (state?.ui) state.ui.subscriptionRequired = true;
+                if (typeof context.showSubscriptionGate === "function") {
+                    context.showSubscriptionGate(detailPayload);
+                }
             }
             throw err;
         }

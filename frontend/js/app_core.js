@@ -199,6 +199,8 @@ function createAppCore() {
             // RV-SEC-05: set after account deletion; requestJson refuses
             // every further request.
             accountDeleted: false,
+            // Set when the API answers subscription_required.
+            subscriptionRequired: false,
         },
         search: {
             // RV-FE-03: ``draft`` mirrors the search input on every

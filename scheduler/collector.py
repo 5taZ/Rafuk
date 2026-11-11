@@ -61,6 +61,7 @@ from api.models import (
     User,
     UserConsent,
 )
+from api.schemas import WatchlistComparison
 from api.services.aggregator import (
     PriceStats,
     apply_search_mode,
@@ -71,6 +72,7 @@ from api.services.aggregator import (
     extract_prices,
     normalize_price_byn,
 )
+from api.services.cache import CacheBackend, RedisCache
 from api.services.history_service import (
     QuerySyncResult,
     TrendReversal,
@@ -87,6 +89,7 @@ from api.services.listing_mapper import first_image_url, iter_image_urls
 from api.services.market_signals import region_label
 from api.services.reseller_tools import matches_tracker_filters
 from api.services.tracker_limits import pause_excess_trackers
+from api.services.watchlist_market import load_page_comparisons
 from bot.keyboards import (
     enhanced_alert_keyboard,
     inline_keyboard_from_json,
@@ -1249,6 +1252,88 @@ async def _record_key_failure(
     await session.commit()
 
 
+# A notification states the same "−X% к медиане · N аналогов" as the
+# Mini App card: the comparables come from the app's own loader and land in
+# the shared Redis dataset cache, so opening the card right after the alert
+# reuses the exact sample. The page's whole-query median (one Kufar page,
+# every model mixed) said −11% where the card said −9%.
+_MARKET_COMPARISON_TIMEOUT_SECONDS = 20.0
+
+
+class _MarketDiscounts:
+    """Per-search-key memo of the app's market comparison for ads that are
+    about to be announced. Unknown (no reliable comparables, fetch failed)
+    is ``None`` — the chat then shows no figure, like the card."""
+
+    def __init__(self, query: str, ads_by_id: Mapping[int, dict[str, object]], settings: Settings):
+        self._query = query
+        self._ads_by_id = ads_by_id
+        self._settings = settings
+        self._known: dict[int, WatchlistComparison | None] = {}
+
+    async def get(self, ad_ids: Collection[int]) -> dict[int, WatchlistComparison | None]:
+        missing = [
+            ad_id for ad_id in dict.fromkeys(ad_ids)
+            if ad_id not in self._known and ad_id in self._ads_by_id
+        ]
+        if missing:
+            try:
+                found = await asyncio.wait_for(
+                    load_page_comparisons(
+                        [self._ads_by_id[ad_id] for ad_id in missing],
+                        query=self._query,
+                        settings=self._settings,
+                        client=_get_kufar_client(self._settings),
+                        cache=_get_market_cache(self._settings),
+                    ),
+                    timeout=_MARKET_COMPARISON_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:  # noqa: BLE001 — the alert still goes out, without a figure
+                logger.warning("Market comparison for alerts failed: %s", type(exc).__name__)
+                found = {}
+            for ad_id in missing:
+                self._known[ad_id] = found.get(ad_id)
+        return {ad_id: self._known.get(ad_id) for ad_id in ad_ids}
+
+
+def _market_discount(comparison: WatchlistComparison | None) -> float | None:
+    if comparison is None or comparison.delta_percent is None:
+        return None
+    return max(0.0, -float(comparison.delta_percent))
+
+
+async def _apply_market_discounts(
+    events: list[TrackerEvent], tracker: Tracker, market: _MarketDiscounts,
+) -> list[TrackerEvent]:
+    """Re-check discount alerts against the app's comparables: drop the ones
+    the card would not show as a discount of at least the threshold, and
+    carry the card's figure into the event and the message. Without a
+    comparison the whole-query check stands, and the message has no figure."""
+    discount_events = [event for event in events if event.event_type == "discount_alert"]
+    if not discount_events:
+        return events
+    comparisons = await market.get([int(event.ad_id) for event in discount_events])
+    threshold = float(tracker.alert_discount_percent or 0)
+    kept = []
+    for event in events:
+        comparison = (
+            comparisons.get(int(event.ad_id)) if event.event_type == "discount_alert" else None
+        )
+        if comparison is not None:
+            discount = _market_discount(comparison) or 0.0
+            if discount < threshold:
+                continue
+            event.delta_byn = discount
+            event.parameters = {
+                **(event.parameters or {}),
+                "discount_percent": round(discount, 1),
+                "median_byn": comparison.median_byn,
+                "comparable_count": comparison.comparable_count,
+            }
+        kept.append(event)
+    return kept
+
+
 async def _process_search_key(
     session: AsyncSession,
     ctx: _TickContext,
@@ -1340,6 +1425,7 @@ async def _process_search_key(
         len(trackers),
     )
 
+    market = _MarketDiscounts(query, ads_by_id, ctx.settings)
     queued = 0
     for tracker in trackers:
         if tracker.last_checked_at is None:
@@ -1375,13 +1461,19 @@ async def _process_search_key(
         )
         # Jobs use the event fields already set in memory. The savepoint
         # flushes the group's events, tracker updates and outbox together.
+        recorded_new = {
+            event.ad_id for event in created if event.event_type == "new_listing"
+        }
+        comparisons = await market.get([
+            state.ad_id for state in tracker_sync_result.new_listings
+            if state.ad_id in recorded_new
+        ][:3])
         jobs = _listing_notification_jobs(
             tracker,
             tracker_sync_result,
             created,
             ads_by_id,
-            market_stats=market_stats,
-            category_price_stats=category_price_stats,
+            comparisons=comparisons,
         )
         # Send trend reversal as a separate message (uses old keyboard)
         if trend_signal is not None and not trend_already_sent:
@@ -1422,6 +1514,7 @@ async def _process_search_key(
             category_price_stats=category_price_stats,
             alerted=alert_floors.get(tracker.id),
         )
+        threshold_events = await _apply_market_discounts(threshold_events, tracker, market)
         if threshold_events:
             session.add_all(threshold_events)
             threshold_msg = _build_threshold_message(threshold_events)
@@ -1472,8 +1565,7 @@ def _listing_notification_jobs(
     created: list[TrackerEvent],
     ads_by_id: dict[int, dict[str, object]],
     *,
-    market_stats: PriceStats,
-    category_price_stats: dict[int, PriceStats] | None,
+    comparisons: Mapping[int, WatchlistComparison | None] | None = None,
 ) -> list[_TrackerNotifyJob]:
     """Per-listing Telegram alerts for one tracker's check.
 
@@ -1490,16 +1582,15 @@ def _listing_notification_jobs(
         if (state.ad_id, "new_listing") in recorded
     ]
     for state in new_states[:3]:
-        ad = ads_by_id.get(state.ad_id)
-        delta = (
-            compute_price_vs_reference(ad, market_stats, category_price_stats)
-            if ad is not None else None
-        )
-        discount_pct = -delta if delta is not None and delta < 0 else None
+        comparison = (comparisons or {}).get(state.ad_id)
         jobs.append(_TrackerNotifyJob(
             telegram_user_id=tracker.user.telegram_user_id,
             internal_user_id=tracker.user_id,
-            message=_build_new_listing_message(state, discount_pct=discount_pct),
+            message=_build_new_listing_message(
+                state,
+                discount_pct=_market_discount(comparison),
+                comparable_count=comparison.comparable_count if comparison else None,
+            ),
             reply_markup=enhanced_alert_keyboard(ad_id=state.ad_id, listing_url=state.link),
             # AUDIT-LOW: same (user, ad, event) across trackers → one
             # Telegram message.
@@ -2156,10 +2247,27 @@ def _get_kufar_client(settings: Settings) -> KufarClient:
 
 
 async def _close_kufar_client() -> None:
-    global _kufar_client
+    global _kufar_client, _market_cache
     cached, _kufar_client = _kufar_client, None
     if cached is not None:
         await cached[2].aclose()
+    market_cache, _market_cache = _market_cache, None
+    if market_cache is not None:
+        await market_cache[2].aclose()
+
+
+# The API's Redis dataset cache, shared so an alert's comparables are the
+# ones the Mini App card reads (see _MarketDiscounts).
+_market_cache: tuple[asyncio.AbstractEventLoop, Settings, RedisCache] | None = None
+
+
+def _get_market_cache(settings: Settings) -> CacheBackend:
+    global _market_cache
+    loop = asyncio.get_running_loop()
+    cached = _market_cache
+    if cached is None or cached[0] is not loop or cached[1] is not settings:
+        _market_cache = cached = (loop, settings, RedisCache.from_url(settings.redis_url))
+    return cached[2]
 
 
 def _dlq_next_retry_after(retry_count: int) -> datetime:

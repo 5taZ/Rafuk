@@ -668,6 +668,116 @@ body.modal-open {
     line-height: 1.5;
 }
 
+/* Shown over the blurred, inert app while the user is not subscribed to
+   the required Telegram channel (403 subscription_required). The blur is
+   a filter on the app root, not a backdrop-filter on the overlay. */
+body.subscription-locked #app-root {
+    filter: blur(12px) saturate(0.85);
+    pointer-events: none;
+    user-select: none;
+}
+
+.subscription-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(env(safe-area-inset-top, 0px) + var(--space-4))
+        calc(env(safe-area-inset-right, 0px) + var(--space-4))
+        calc(env(safe-area-inset-bottom, 0px) + var(--space-4))
+        calc(env(safe-area-inset-left, 0px) + var(--space-4));
+    background: color-mix(in srgb, var(--bg) 45%, transparent);
+    color: var(--text);
+    text-align: center;
+}
+
+.subscription-gate-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    max-width: 360px;
+    padding: var(--space-6) var(--space-4) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-elevated);
+}
+
+.subscription-gate-icon {
+    font-size: 40px;
+    line-height: 1;
+}
+
+.subscription-gate-title {
+    margin: 0;
+    font-size: var(--text-xl);
+    font-weight: 700;
+}
+
+.subscription-gate-title:focus {
+    outline: none;
+}
+
+.subscription-gate-text {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-norm);
+    line-height: 1.5;
+}
+
+.subscription-gate-notice {
+    width: 100%;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--danger-border);
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.subscription-gate-notice[hidden] {
+    display: none;
+}
+
+.subscription-gate-action:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.subscription-gate-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: 100%;
+    max-width: 320px;
+    margin-top: var(--space-2);
+}
+
+.subscription-gate-action {
+    appearance: none;
+    min-height: 48px;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-md);
+    background: var(--bg-card);
+    color: var(--text);
+    font: 600 var(--text-norm) var(--font);
+    cursor: pointer;
+}
+
+.subscription-gate-action.is-primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--text-inverse);
+}
+
 .toast-container {
     position: fixed;
     bottom: calc(env(safe-area-inset-bottom, 16px) + 14px);

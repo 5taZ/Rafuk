@@ -35,6 +35,32 @@ def _notification_number(value: float) -> str:
     ).replace(".", ",")
 
 
+_ANALOG_FORMS = ("аналог", "аналога", "аналогов")
+
+
+def _analog_noun(count: int) -> str:
+    if count % 10 == 1 and count % 100 != 11:
+        return _ANALOG_FORMS[0]
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return _ANALOG_FORMS[1]
+    return _ANALOG_FORMS[2]
+
+
+def _rounded_discount(discount_pct: float) -> int:
+    # The card shows Math.round(delta) of a negative delta, which rounds
+    # halves up (−12.5 → −12); Python's round() would say 13 or 12 by parity.
+    return math.ceil(float(discount_pct) - 0.5)
+
+
+def _market_delta_line(discount_pct: float, comparable_count: int | None = None) -> str:
+    """Same wording and rounding as the Mini App badge (formatMarketDelta),
+    so the chat and the listing card show one number."""
+    line = f"−{_rounded_discount(discount_pct)}% к медиане"
+    if comparable_count:
+        line += f" · {_notification_number(comparable_count)} {_analog_noun(comparable_count)}"
+    return line
+
+
 def _notification_price(value: float | None, price_type: str | None = None) -> str:
     if value is None or value == 0 or price_type in {"free", "negotiable"}:
         return _format_price_byn(value, price_type)
@@ -55,8 +81,9 @@ def _build_threshold_message(threshold_events: list[TrackerEvent]) -> str | None
             detail = f"Ваш порог: {_notification_price(threshold)}"
     else:
         heading = "Скидка от медианы"
-        if primary.delta_byn:
-            detail = f"На {_notification_number(primary.delta_byn)}% ниже медианы"
+        count = (primary.parameters or {}).get("comparable_count")
+        if primary.delta_byn and count:
+            detail = _market_delta_line(primary.delta_byn, count)
     lines = [heading, _notification_title(primary.title), price]
     if detail:
         lines.append(detail)
@@ -125,11 +152,12 @@ def _build_new_listing_message(
     state: QueryListingState,
     *,
     discount_pct: float | None = None,
+    comparable_count: int | None = None,
 ) -> str:
     price = _notification_price(state.last_price_byn, state.price_type)
     lines = ["Новое объявление", _notification_title(state.title), price]
-    if discount_pct is not None and discount_pct > 0:
-        lines.append(f"На {_notification_number(discount_pct)}% ниже медианы")
+    if discount_pct is not None and _rounded_discount(discount_pct) > 0:
+        lines.append(_market_delta_line(discount_pct, comparable_count))
     return "\n".join(lines)
 
 

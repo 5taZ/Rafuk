@@ -254,7 +254,7 @@ def test_build_new_listing_message_with_discount():
         last_seen_at=now,
     )
     msg = _build_new_listing_message(state, discount_pct=10.0)
-    assert msg == "Новое объявление\niPhone 15 256GB\n2\u00a0000 BYN\nНа 10% ниже медианы"
+    assert msg == "Новое объявление\niPhone 15 256GB\n2\u00a0000 BYN\n−10% к медиане"
 
 
 # ---------------------------------------------------------------------------
@@ -2242,12 +2242,12 @@ def test_new_listing_message_omits_discount_when_above_market() -> None:
     msg_premium = _build_new_listing_message(
         state, discount_pct=None,
     )
-    assert "% ниже медианы" not in msg_premium
+    assert "к медиане" not in msg_premium
     # Genuine discount still renders as before.
     msg_discount = _build_new_listing_message(
         state, discount_pct=20.0,
     )
-    assert "На 20% ниже медианы" in msg_discount
+    assert "−20% к медиане" in msg_discount
 
 
 @pytest.mark.asyncio

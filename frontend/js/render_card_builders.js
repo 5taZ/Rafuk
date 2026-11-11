@@ -560,7 +560,12 @@ function createRenderCardBuilders(context) {
             attrs: { ...priceAttrs, placeholder: "цена продажи" },
             dataset: { role: "sold-price" },
         });
-        buyInput.value = lead.buy_price_byn == null ? "" : formatDealAmount(lead.buy_price_byn);
+        // Without a saved buy price the listing price is the likely answer:
+        // prefill it, so "Подтвердить продажу" does not stop on an empty field
+        // that only looked filled through the chip.
+        const prefilledBuy = lead.buy_price_byn == null && !isSold && Boolean(priceText);
+        buyInput.value = lead.buy_price_byn != null ? formatDealAmount(lead.buy_price_byn)
+            : prefilledBuy ? priceText : "";
         soldInput.value = lead.sold_price_byn == null ? "" : formatDealAmount(lead.sold_price_byn);
         function clearPriceError() {
             priceError.hidden = true;
@@ -599,7 +604,7 @@ function createRenderCardBuilders(context) {
                     "div",
                     { className: "lead-field-wrap" },
                     buyInput,
-                    isSold ? null : fillBuy,
+                    isSold || prefilledBuy ? null : fillBuy,
                     domEl("span", { className: "unit", text: "BYN" }),
                 ),
             ),

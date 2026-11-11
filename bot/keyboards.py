@@ -20,6 +20,29 @@ def mini_app_keyboard(url: str) -> InlineKeyboardMarkup | None:
     )
 
 
+SUBSCRIPTION_CHECK_PREFIX = "sub_check"
+
+
+def subscription_keyboard(
+    channel_url: str, start_param: str | None = None,
+) -> InlineKeyboardMarkup:
+    # The /start deep-link view rides along in callback_data (64-byte cap;
+    # the start handler re-validates it) so it survives the subscription.
+    check_data = SUBSCRIPTION_CHECK_PREFIX
+    if start_param:
+        check_data = f"{SUBSCRIPTION_CHECK_PREFIX}:{start_param}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📢 Подписаться на канал", url=channel_url, style="primary",
+            )],
+            [InlineKeyboardButton(
+                text="✅ Я подписался", callback_data=check_data, style="success",
+            )],
+        ]
+    )
+
+
 def tracker_alert_keyboard(
     mini_app_url: str,
     *,

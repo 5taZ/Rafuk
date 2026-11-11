@@ -4343,6 +4343,124 @@ assert.strictEqual(closed, 1);
     _node_ok(harness)
 
 
+def test_subscription_required_shows_gate_and_stops_requests() -> None:
+    """The API answers 403 subscription_required to non-subscribers of the
+    Rafuk channel; requestJson raises the gate once and sends nothing more."""
+    harness = _js("api_core.js") + r"""
+const assert = require("assert");
+globalThis.window = globalThis;
+const gates = [];
+const state = { ui: {} };
+const core = createApiCore({ state, showSubscriptionGate: (detail) => gates.push(detail) });
+let fetchCalls = 0;
+globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({ detail: {
+        error: "subscription_required",
+        channel_url: "https://t.me/RafuksToResell",
+        message: "Подпишитесь на канал @RafuksToResell, чтобы пользоваться Rafuk.",
+    } }), { status: 403 });
+};
+
+(async () => {
+    await assert.rejects(core.getJson("/api/v1/profile/me"), (err) => {
+        assert.strictEqual(err.subscriptionRequired, true);
+        assert.ok(err.message.includes("@RafuksToResell"));
+        return true;
+    });
+    assert.strictEqual(state.ui.subscriptionRequired, true);
+    assert.deepStrictEqual(gates.map((detail) => detail.channel_url), ["https://t.me/RafuksToResell"]);
+    await assert.rejects(
+        core.getJson("/api/v1/leads"), (err) => err.subscriptionRequired === true,
+    );
+    assert.strictEqual(fetchCalls, 1, "nothing else leaves the app behind the gate");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_subscription_gate_replaces_app_and_opens_channel() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+const assert = require("assert");
+const opened = [];
+window.Telegram = {
+    WebApp: { initData: "query_id=1", openTelegramLink: (url) => opened.push(url) },
+};
+const appRoot = document.createElement("div");
+appRoot.id = "app-root";
+document.body.appendChild(appRoot);
+const core = createRenderCore({ state: {}, elements: {} });
+core.showSubscriptionGate({ channel_url: "https://t.me/RafuksToResell" });
+core.showSubscriptionGate({ channel_url: "https://t.me/RafuksToResell" });
+const gates = document.querySelectorAll(".subscription-gate");
+assert.strictEqual(gates.length, 1);
+// The app stays rendered behind the blur, but cannot be used.
+assert.strictEqual(appRoot.hidden, false);
+assert.strictEqual(appRoot.hasAttribute("inert"), true);
+assert.strictEqual(document.body.classList.contains("subscription-locked"), true);
+assert.ok(gates[0].textContent.includes("@RafuksToResell"));
+const [subscribe, check] = gates[0].querySelectorAll("button");
+subscribe.click();
+assert.deepStrictEqual(opened, ["https://t.me/RafuksToResell"]);
+assert.strictEqual(check.textContent, "Я подписался");
+"""
+    _node_ok(harness)
+
+
+def test_subscription_gate_check_button_reports_missing_subscription() -> None:
+    """«Я подписался» asks the API first: still unsubscribed shows a notice
+    in the card instead of a reload that flashed the app; subscribed reloads."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+const assert = require("assert");
+let reloads = 0;
+location.reload = () => { reloads += 1; };
+window.Telegram = { WebApp: { initData: "query_id=1" } };
+const sent = [];
+let status = 403;
+globalThis.fetch = async (url, options) => {
+    sent.push([url, options.headers["X-Telegram-Init-Data"]]);
+    return new Response(JSON.stringify(status === 403
+        ? { detail: { error: "subscription_required" } }
+        : { user: {} }), { status });
+};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const core = createRenderCore({ state: {}, elements: {} });
+core.showSubscriptionGate({ channel_url: "https://t.me/RafuksToResell" });
+const gate = document.querySelector(".subscription-gate");
+const check = gate.querySelectorAll("button")[1];
+const notice = gate.querySelector(".subscription-gate-notice");
+assert.strictEqual(notice.hidden, true);
+
+(async () => {
+    check.click();
+    for (let i = 0; i < 5; i++) await settle();
+    assert.deepStrictEqual(sent, [["/api/v1/profile/me", "query_id=1"]]);
+    assert.strictEqual(reloads, 0);
+    assert.strictEqual(notice.hidden, false);
+    assert.ok(notice.textContent.startsWith("Вы не подписаны на канал @RafuksToResell"));
+    assert.strictEqual(check.disabled, false);
+    assert.strictEqual(check.textContent, "Я подписался");
+
+    status = 200;
+    check.click();
+    for (let i = 0; i < 5; i++) await settle();
+    assert.strictEqual(reloads, 1);
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_subscription_gate_ignores_foreign_channel_links() -> None:
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+const assert = require("assert");
+const opened = [];
+window.Telegram = { WebApp: { openTelegramLink: (url) => opened.push(url) } };
+const core = createRenderCore({ state: {}, elements: {} });
+core.showSubscriptionGate({ channel_url: "https://evil.example/RafuksToResell" });
+document.querySelector(".subscription-gate").querySelectorAll("button")[0].click();
+assert.deepStrictEqual(opened, ["https://t.me/RafuksToResell"]);
+"""
+    _node_ok(harness)
+
+
 _SW_HARNESS = r"""
 const assert = require("assert");
 const ORIGIN = "https://app.example";
@@ -4864,7 +4982,10 @@ trackers.renderTrackerEvents();
 const kind = elements.trackerEventsList.querySelector(".event-kind");
 assert.equal(kind.textContent, "Новое объявление");
 const published = elements.trackerEventsList.querySelector(".event-time");
-assert.equal(published.textContent, "2026-10-19");
+assert.equal(published.textContent, "На Kufar 2026-10-19");
+assert.equal(
+    published.getAttribute("title"), "Опубликовано на Kufar · найдено автопоиском 2026-10-20",
+);
 assert.equal(published.getAttribute("datetime"), "2026-10-19");
 state.trackers.events[0].list_time = null;
 trackers.renderTrackerEvents();

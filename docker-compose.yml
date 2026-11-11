@@ -30,6 +30,9 @@ x-app-env: &app-env
   REDIS_URL: *redis-url
   API_BASE_URL: ${API_BASE_URL}
   MINI_APP_URL: ${MINI_APP_URL}
+  # Channel the bot and the Mini App API require a subscription to; set it
+  # empty to open Rafuk to everyone. The bot must be the channel's admin.
+  REQUIRED_CHANNEL: ${REQUIRED_CHANNEL-@RafuksToResell}
   # Read by api/logging_config.py in every service and by uvicorn (--log-level,
   # lowercase) in the api service.
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -222,6 +225,8 @@ services:
       # OPUS-12: shared with api via env so the bot can authenticate
       # callbacks against the API without forging initData.
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      # Admins skip the channel-subscription check, as in the api.
+      ADMIN_TELEGRAM_USER_IDS: ${ADMIN_TELEGRAM_USER_IDS:-}
     depends_on:
       api:
         condition: service_healthy

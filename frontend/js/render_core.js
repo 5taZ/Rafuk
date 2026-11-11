@@ -410,6 +410,103 @@ function createRenderCore(context) {
         if (textNode && textNode.textContent !== text) textNode.textContent = text;
     }
 
+    /* ===== Subscription gate ===== */
+
+    // The API serves only subscribers of the Rafuk channel and answers
+    // 403 subscription_required otherwise (the menu button opens the Mini
+    // App without the bot's /start check). The app stays behind a blur,
+    // inert, under one notice until the user subscribes and reloads.
+    const _CHANNEL_URL = /^https:\/\/t\.me\/[A-Za-z0-9_]{4,32}$/;
+    let _subscriptionGate = null;
+
+    function showSubscriptionGate(detail) {
+        if (!document.body || (_subscriptionGate && _subscriptionGate.isConnected)) return;
+        const url = _CHANNEL_URL.test(String(detail?.channel_url || ""))
+            ? detail.channel_url
+            : "https://t.me/RafuksToResell";
+        const channel = `@${url.slice("https://t.me/".length)}`;
+        document.getElementById("app-root")?.setAttribute("inert", "");
+        document.body.classList.add("subscription-locked");
+        const title = domEl("h1", { className: "subscription-gate-title", text: "Подпишитесь на канал" });
+        title.tabIndex = -1;
+        const subscribe = domEl("button", {
+            className: "subscription-gate-action is-primary",
+            type: "button",
+            text: "Подписаться на канал",
+        });
+        subscribe.addEventListener("click", () => {
+            const tg = window.Telegram?.WebApp;
+            if (typeof tg?.openTelegramLink === "function") {
+                try {
+                    tg.openTelegramLink(url);
+                    return;
+                } catch (err) {
+                    logClientError("openTelegramLink failed", err, "warn");
+                }
+            }
+            openExternalLink(url);
+        });
+        const check = domEl("button", {
+            className: "subscription-gate-action",
+            type: "button",
+            text: "Я подписался",
+        });
+        const notice = domEl("p", {
+            className: "subscription-gate-notice",
+            hidden: true,
+            attrs: { role: "status", "aria-live": "polite" },
+        });
+        // Asks the API before reloading: a reload while still unsubscribed
+        // only flashed the app and put the same gate back.
+        check.addEventListener("click", async () => {
+            if (check.disabled) return;
+            check.disabled = true;
+            check.textContent = "Проверяем…";
+            notice.hidden = true;
+            let message = "";
+            try {
+                const initData = window.Telegram?.WebApp?.initData;
+                const response = await fetch("/api/v1/profile/me", {
+                    headers: initData ? { "X-Telegram-Init-Data": initData } : {},
+                    cache: "no-store",
+                });
+                if (response.ok) {
+                    window.location.reload();
+                    return;
+                }
+                const payload = await response.json().catch(() => null);
+                message = payload?.detail?.error === "subscription_required"
+                    ? `Вы не подписаны на канал ${channel}. Подпишитесь и нажмите кнопку ещё раз.`
+                    : "Не удалось проверить подписку. Попробуйте ещё раз.";
+            } catch (_) {
+                message = "Нет соединения с сервером. Попробуйте ещё раз.";
+            }
+            notice.textContent = message;
+            notice.hidden = false;
+            check.disabled = false;
+            check.textContent = "Я подписался";
+            try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.("error"); } catch (_) {}
+        });
+        _subscriptionGate = domEl(
+            "div",
+            { className: "subscription-gate", attrs: { role: "alertdialog", "aria-modal": "true" } },
+            domEl(
+                "div",
+                { className: "subscription-gate-card" },
+                domEl("div", { className: "subscription-gate-icon", text: "📢", attrs: { "aria-hidden": "true" } }),
+                title,
+                domEl("p", {
+                    className: "subscription-gate-text",
+                    text: `Rafuk доступен подписчикам канала ${channel}. Подпишитесь и нажмите «Я подписался».`,
+                }),
+                notice,
+                domEl("div", { className: "subscription-gate-actions" }, subscribe, check),
+            ),
+        );
+        document.body.appendChild(_subscriptionGate);
+        try { title.focus(); } catch (_) {}
+    }
+
     /* ===== Loading ===== */
 
     /**
@@ -741,5 +838,6 @@ function createRenderCore(context) {
         renderViews,
         buildEmptyState,
         showSessionBanner,
+        showSubscriptionGate,
     };
 }

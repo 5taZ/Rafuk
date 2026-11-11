@@ -446,8 +446,8 @@ function createApiTrackers(context) {
         });
     }
 
-    function openTrackerMarket() {
-        const tracker = tracking.items.find((item) => item.id === tracking.editingId);
+    function openTrackerMarket(trackerId = tracking.editingId) {
+        const tracker = tracking.items.find((item) => item.id === trackerId);
         if (!tracker) return;
         elements.searchInput.value = tracker.query;
         state.search.draft = tracker.query;
@@ -487,7 +487,7 @@ function createApiTrackers(context) {
     elements.trackerCopyButton?.addEventListener("click", () => openEditTracker(tracking.editingId, { copy: true }));
     elements.trackerLoadCategories?.addEventListener("click", loadTrackerCategories);
     elements.toggleTrackerPause?.addEventListener("click", togglePause);
-    elements.trackerMarket?.addEventListener("click", openTrackerMarket);
+    elements.trackerMarket?.addEventListener("click", () => openTrackerMarket());
     elements.deleteTrackerButton?.addEventListener("click", deleteTracker);
     elements.closeEditModal?.addEventListener("click", () => closeEditTracker());
     elements.cancelEditBtn?.addEventListener("click", () => closeEditTracker());
@@ -496,7 +496,7 @@ function createApiTrackers(context) {
     });
 
     return {
-        loadTrackers, openEditTracker, closeEditTracker,
+        loadTrackers, openEditTracker, closeEditTracker, openTrackerMarket,
         refreshTrackerEvents, clearTrackerEvents, startTrackerRefresh, stopTrackerRefresh,
     };
 }

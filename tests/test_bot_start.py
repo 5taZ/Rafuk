@@ -224,7 +224,20 @@ async def test_dispatcher_still_answers_private_chats(dispatcher) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["/app", "/help", "/deals", "/profit", "/stats iphone"])
+async def test_help_answers_with_the_start_greeting(dispatcher) -> None:
+    """Older greetings in users' chats still mention /help."""
+    bot = AsyncMock()
+    message = _chat_message("private", "/help").as_(bot)
+    await dispatcher.propagate_event(update_type="message", event=message, bot=bot)
+
+    bot.assert_awaited_once()
+    reply = bot.await_args.args[0]
+    assert reply.text.startswith("Rafuk — цены, объявления и автопоиск на Kufar.")
+    assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/app", "/deals", "/profit", "/stats iphone"])
 async def test_dispatcher_ignores_retired_commands(dispatcher, command: str) -> None:
     from aiogram.dispatcher.event.bases import UNHANDLED
 
@@ -271,3 +284,168 @@ async def test_configure_bot_menu_refreshes_the_default_launch_button() -> None:
 
     await configure_bot_menu(bot, "http://localhost:8080/")
     bot.set_chat_menu_button.assert_awaited_with(menu_button=MenuButtonDefault())
+
+
+# ── Required channel subscription ──────────────────────────────────────────
+
+
+@pytest.fixture
+def channel_gate(monkeypatch):
+    """REQUIRED_CHANNEL on, Telegram's getChatMember answered by ``members``."""
+    from api.config import get_settings
+
+    monkeypatch.setenv("REQUIRED_CHANNEL", "@RafuksToResell")
+    get_settings.cache_clear()
+    members: dict[int, bool] = {}
+    asked: list[int] = []
+
+    async def fake_fetch(bot_token, channel, user_id):
+        assert channel == "RafuksToResell"
+        asked.append(user_id)
+        return members.get(user_id, False)
+
+    monkeypatch.setattr("api.services.channel_subscription.fetch_channel_membership", fake_fetch)
+    yield SimpleNamespace(members=members, asked=asked)
+    get_settings.cache_clear()
+
+
+def _callback(data: str, bot):
+    from datetime import UTC, datetime
+
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    return CallbackQuery(
+        id="cb1", from_user=User(id=42, is_bot=False, first_name="Тест"),
+        chat_instance="ci", data=data,
+        message=Message(
+            message_id=5, date=datetime.now(UTC), chat=Chat(id=42, type="private"), text="welcome",
+        ).as_(bot),
+    ).as_(bot)
+
+
+def _calls(bot, method_name: str) -> list:
+    return [
+        call.args[0] for call in bot.await_args_list
+        if type(call.args[0]).__name__ == method_name
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["/start", "/start tracking", "/help"])
+async def test_unsubscribed_user_gets_welcome_with_channel_link(
+    dispatcher, channel_gate, text: str,
+) -> None:
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="message", event=_chat_message("private", text).as_(bot), bot=bot,
+    )
+
+    (reply,) = _calls(bot, "SendMessage")
+    assert reply.text.startswith("👋 Привет, Тест!")
+    assert "@RafuksToResell" in reply.text
+    subscribe, check = (row[0] for row in reply.reply_markup.inline_keyboard)
+    assert subscribe.url == "https://t.me/RafuksToResell"
+    assert check.callback_data == ("sub_check:tracking" if "tracking" in text else "sub_check")
+    assert channel_gate.asked == [42]
+
+
+@pytest.mark.asyncio
+async def test_subscribed_user_gets_the_mini_app(dispatcher, channel_gate) -> None:
+    channel_gate.members[42] = True
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="message", event=_chat_message("private", "/start").as_(bot), bot=bot,
+    )
+
+    (reply,) = _calls(bot, "SendMessage")
+    assert reply.text.startswith("Rafuk — цены")
+    assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
+
+
+@pytest.mark.asyncio
+async def test_admin_skips_the_channel_check(dispatcher, channel_gate, monkeypatch) -> None:
+    from api.config import get_settings
+
+    monkeypatch.setenv("ADMIN_TELEGRAM_USER_IDS", "42")
+    get_settings.cache_clear()
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="message", event=_chat_message("private", "/start").as_(bot), bot=bot,
+    )
+
+    assert _calls(bot, "SendMessage")[0].text.startswith("Rafuk — цены")
+    assert channel_gate.asked == []
+
+
+@pytest.mark.asyncio
+async def test_alert_buttons_are_gated_too(dispatcher, channel_gate) -> None:
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="callback_query", event=_callback("add_lead:123", bot), bot=bot,
+    )
+
+    (answer,) = _calls(bot, "AnswerCallbackQuery")
+    assert answer.show_alert is True
+    assert "@RafuksToResell" in answer.text
+    assert not _calls(bot, "SendMessage")
+
+
+@pytest.mark.asyncio
+async def test_check_button_without_subscription_keeps_the_welcome(
+    dispatcher, channel_gate,
+) -> None:
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="callback_query", event=_callback("sub_check", bot), bot=bot,
+    )
+
+    (answer,) = _calls(bot, "AnswerCallbackQuery")
+    assert answer.show_alert is True
+    assert "не найдена" in answer.text
+    assert not _calls(bot, "EditMessageText")
+
+
+@pytest.mark.asyncio
+async def test_check_button_after_subscribing_opens_the_requested_view(
+    dispatcher, channel_gate,
+) -> None:
+    channel_gate.members[42] = True
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="callback_query", event=_callback("sub_check:tracking", bot), bot=bot,
+    )
+
+    assert _calls(bot, "AnswerCallbackQuery")[0].text == "Подписка подтверждена ✅"
+    (edited,) = _calls(bot, "EditMessageText")
+    assert edited.text.startswith("✅ Подписка подтверждена")
+    assert "«Автопоиск»" in edited.text
+    assert "start_param=tracking" in edited.reply_markup.inline_keyboard[0][0].web_app.url
+
+
+@pytest.mark.asyncio
+async def test_check_button_rejects_unknown_view(dispatcher, channel_gate) -> None:
+    channel_gate.members[42] = True
+    bot = AsyncMock()
+    await dispatcher.propagate_event(
+        update_type="callback_query", event=_callback("sub_check:evil", bot), bot=bot,
+    )
+
+    (edited,) = _calls(bot, "EditMessageText")
+    assert "Rafuk — цены" in edited.text
+    assert "start_param" not in edited.reply_markup.inline_keyboard[0][0].web_app.url
+
+
+@pytest.mark.asyncio
+async def test_startup_check_reports_missing_channel_admin_rights(monkeypatch, caplog) -> None:
+    from bot import main as bot_main
+
+    async def no_access(bot_token, channel, user_id):
+        assert user_id == 7123456789
+        return None
+
+    monkeypatch.setattr(bot_main, "fetch_channel_membership", no_access)
+    with caplog.at_level("ERROR", logger="bot.main"):
+        result = await bot_main.check_required_channel_access("7123456789:AAF", "RafuksToResell")
+    assert result is None
+    assert "administrator" in caplog.text
+    assert await bot_main.check_required_channel_access("7123456789:AAF", "") is None

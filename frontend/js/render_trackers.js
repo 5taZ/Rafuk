@@ -164,6 +164,25 @@ function createRenderTrackers(context) {
             attrs: { "aria-label": `Настроить трекер «${tracker.query}»`, "aria-haspopup": "dialog" },
         });
         editButton.addEventListener("click", () => actions.openEditTracker(tracker.id));
+        // A fresh tracker records only listings that appear after it starts,
+        // so "0 событий" next to lots already on sale reads like a bug.
+        let freshHint = null;
+        if (!tracker.paused && !tracker.event_count && actions.openTrackerMarket) {
+            const showNow = domEl("button", {
+                className: "ghost-btn small",
+                type: "button",
+                text: "Показать подходящие сейчас",
+                dataset: { role: "show-current" },
+                attrs: { "aria-label": `Показать объявления под условия трекера «${tracker.query}»` },
+            });
+            showNow.addEventListener("click", () => { void actions.openTrackerMarket(tracker.id); });
+            freshHint = domEl("div", { className: "tracker-fresh-hint" },
+                domEl("p", {
+                    className: "tracker-note",
+                    text: "Трекер присылает только новые объявления и снижения цены. Уже выставленные лоты можно посмотреть в поиске.",
+                }),
+                showNow);
+        }
 
         return domEl("article", {
             className: "tracker-card-enhanced",
@@ -189,6 +208,7 @@ function createRenderTrackers(context) {
                 trackerStat("События", (tracker.event_count || 0).toLocaleString("ru-RU")),
                 trackerStat("В день", (tracker.avg_events_per_day || 0).toLocaleString("ru-RU")),
                 trackerStat("Последнее", lastEvent || "—")),
+            freshHint,
             domEl("div", { className: "tracker-card-actions" }, eventsButton, editButton));
     }
 
@@ -321,13 +341,19 @@ function createRenderTrackers(context) {
                 const isNewListing = event.event_type === "new_listing";
                 const isPriceDrop = event.event_type === "price_drop";
                 const publishedTime = isNewListing ? formatDate(event.list_time) : "";
-                const displayTime = publishedTime || formatDate(event.created_at);
+                const foundTime = formatDate(event.created_at);
+                const displayTime = publishedTime || foundTime;
+                // A new listing shows its Kufar publication time, which is
+                // earlier than the bot message; say so on the card itself.
                 const timeNode = displayTime ? domEl("time", {
                     className: "event-time",
-                    text: isNewListing && !publishedTime ? `Найдено ${displayTime}` : displayTime,
+                    text: publishedTime ? `На Kufar ${publishedTime}`
+                        : isNewListing ? `Найдено ${displayTime}` : displayTime,
                     attrs: {
                         datetime: publishedTime ? event.list_time : event.created_at,
-                        title: publishedTime ? "Опубликовано на Kufar" : "Обнаружено автопоиском",
+                        title: publishedTime
+                            ? `Опубликовано на Kufar${foundTime ? ` · найдено автопоиском ${foundTime}` : ""}`
+                            : "Обнаружено автопоиском",
                     },
                 }) : null;
                 const thumbSrc = (() => {
