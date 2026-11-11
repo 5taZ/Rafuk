@@ -261,13 +261,33 @@ _AI_CB_OPEN_SECONDS = 60.0
 _AI_CB_PROBE_DEADLINE_SECONDS = 180.0
 
 # Top-level keys of _PRICE_MARKET_SCHEMA (Call A) / _CONDITION_RISKS_SCHEMA (Call B).
+# AI-REVIEW-3.5: no best_pick — the prompt carries no ad ids, so the backend
+# always chose the alternative itself and replaced the model's reason.
 _PRICE_MARKET_KEYS = (
-    "fair_price", "resale_potential", "negotiation_tips", "market_context", "best_pick",
+    "fair_price", "resale_potential", "negotiation_tips", "market_context",
 )
 _CONDITION_RISKS_KEYS = (
     "condition", "watch_out", "meeting_checklist", "red_flags", "scam_analysis",
     "photo_authenticity", "recommendation", "summary",
 )
+
+
+# AI-REVIEW-3.6: reasoning depth per call. Output (thinking included) is the
+# expensive half of every request, so the simple calls think briefly; the
+# condition/risk call and the seller draft keep "medium".
+_OPERATION_REASONING_EFFORT = {
+    "analysis_price_market": "low",
+    "analysis_condition_risks": "medium",
+    "listing_assistant": "medium",
+    "quick_condition": "low",
+    "chat_json": "low",
+}
+_OPENAI_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    key = (model or "").strip().lower().rsplit("/", 1)[-1]
+    return key.startswith(_OPENAI_REASONING_PREFIXES)
 
 
 class AIService:
@@ -292,7 +312,7 @@ class AIService:
         self._max_images = settings.ai_max_images
         self._proxy_url = settings.ai_proxy_url
         self._chat_min_interval_seconds = max(
-            0.0, float(getattr(settings, "ai_chat_min_interval_seconds", 1.5) or 0.0)
+            0.0, float(getattr(settings, "ai_chat_min_interval_seconds", 0.5) or 0.0)
         )
         self._httpx_client: httpx.AsyncClient | None = None
         self._client_lock = asyncio.Lock()
@@ -360,6 +380,40 @@ class AIService:
             (model or "").lower().startswith("gemini")
             or "generativelanguage.googleapis.com" in self._base_url
         )
+
+    def _request_body(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        max_tokens: int,
+        reasoning_effort: str | None,
+    ) -> dict:
+        """AI-REVIEW-3.6: the chat-completions body each provider accepts.
+
+        * Gemini (OpenAI-compat) — ``max_tokens`` covers thinking + JSON;
+          ``reasoning_effort`` (medium by default) and JSON mode.
+        * OpenAI reasoning models (gpt-5*/gpt-6*/o*) — they take
+          ``max_completion_tokens`` (which also covers reasoning) and no
+          custom ``temperature``; ``reasoning_effort`` is set explicitly so
+          the model default (medium) doesn't bill the simple calls.
+        * Anything else (Together, legacy Gemma) — the plain shape, no JSON
+          mode: those models put the answer in ``reasoning`` when it is set.
+        """
+        body: dict = {"model": model, "messages": messages}
+        if _is_openai_reasoning_model(model):
+            body["max_completion_tokens"] = max_tokens
+            body["reasoning_effort"] = reasoning_effort or "medium"
+            body["response_format"] = {"type": "json_object"}
+            return body
+        body["max_tokens"] = max_tokens
+        body["temperature"] = 0.2
+        if self._is_gemini_model(model):
+            body["reasoning_effort"] = reasoning_effort or "medium"
+            # Gemini honours response_format properly — ask for JSON to
+            # cut down on stray markdown fences and prose around the JSON.
+            body["response_format"] = {"type": "json_object"}
+        return body
 
     @staticmethod
     def _default_listing_assistant_model(base_url: str, model: str) -> str:
@@ -626,31 +680,12 @@ class AIService:
     ) -> dict:
         """Call OpenAI-compatible /chat/completions endpoint."""
         request_model = model or self._model
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": content},
-        ]
-        body: dict = {
-            "model": request_model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.2,
-        }
-        # Gemini 2.5 Flash/Pro spend output budget on internal "thinking"
-        # tokens before producing the JSON. `reasoning_effort: "medium"`
-        # gives enough depth for grounded price comparisons and condition
-        # analysis without the 30-60s latency of "high".
-        #
-        # max_tokens=3200/4000 for analysis, 4800 for listing assistant
-        # (larger JSON output: title + description + 3 pricing tiers +
-        # negotiation playbook + competitors + photo tips).
-        # At medium effort, thinking uses ~300-600 tokens, leaving
-        # ~4200+ for the JSON payload — sufficient for all sections.
-        if self._is_gemini_model(request_model):
-            body["reasoning_effort"] = reasoning_effort or "medium"
-            # Gemini honours response_format properly — ask for JSON to
-            # cut down on stray markdown fences and prose around the JSON.
-            body["response_format"] = {"type": "json_object"}
+        body = self._request_body(
+            request_model,
+            [{"role": "system", "content": system}, {"role": "user", "content": content}],
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort or _OPERATION_REASONING_EFFORT.get(operation),
+        )
         api_key = self._api_key.get_secret_value() if self._api_key else ""
         client = await self._get_client()
         logger.info(
@@ -762,7 +797,7 @@ class AIService:
         """Parallel AI analysis — splits work into 2 concurrent sub-calls.
 
         Call A (Price & Market): fair_price, resale_potential, market_context,
-            negotiation_tips, best_pick
+            negotiation_tips — text only, skipped without a market median
         Call B (Condition & Risks): condition, watch_out, meeting_checklist,
             red_flags, recommendation, summary
 
@@ -837,7 +872,9 @@ class AIService:
                     len(image_urls),
                 )
 
-        # Build multimodal content: text + images (when available)
+        # AI-REVIEW-3.7: only Call B (condition, scam, photo authenticity)
+        # looks at the photos; Call A prices from the text context, so the
+        # image tokens are not paid twice.
         if image_content:
             call_content: list[dict] | str = [
                 {"type": "text", "text": context},
@@ -845,6 +882,10 @@ class AIService:
             ]
         else:
             call_content = context
+        # AI-REVIEW-3.3: without a market median the pipeline drops every
+        # Call A section (fair price, price points, tips, market context),
+        # so the call is not made at all.
+        call_a_needed = bool(market_median)
 
         # Build system prompts for each sub-call
         system_a = (
@@ -886,7 +927,7 @@ class AIService:
             async def _call_a():
                 return await self._chat(
                     system=system_a,
-                    content=content,
+                    content=context,
                     max_tokens=3200,
                     model=self._analysis_model,
                     operation="analysis_price_market",
@@ -910,18 +951,23 @@ class AIService:
                     operation="analysis_condition_risks",
                 )
 
+            if not call_a_needed:
+                return [{}, *await asyncio.gather(_call_b(), return_exceptions=True)]
             return await asyncio.gather(_call_a(), _call_b(), return_exceptions=True)
 
-        logger.warning("AI analyze_listing_parallel: starting staggered sub-calls")
+        def _rate_limited(result: Any) -> bool:
+            return isinstance(result, Exception) and _is_rate_limit_exception(result)
+
+        logger.info(
+            "AI analyze_listing_parallel: starting sub-calls (price_market=%s)", call_a_needed,
+        )
         # Use return_exceptions so one failure doesn't kill the other
         results = await _run_subcalls(call_content)
         images_analyzed = len(image_content)
         if (
             image_content
-            and isinstance(results[0], Exception)
-            and isinstance(results[1], Exception)
-            and _is_rate_limit_exception(results[0])
-            and _is_rate_limit_exception(results[1])
+            and _rate_limited(results[1])
+            and (not call_a_needed or _rate_limited(results[0]))
         ):
             logger.warning("AI multimodal analyse rate-limited; retrying text-only")
             results = await _run_subcalls(context)
@@ -958,6 +1004,8 @@ class AIService:
             )
             # Re-raise the first error so the router fallback path kicks in
             raise results[0]
+        if not call_a_needed and isinstance(results[1], Exception):
+            raise results[1]
 
         # RV2-AI2-01: each call contributes only its own schema's keys, and
         # only the ones it actually filled — a stray or null key from one
@@ -970,10 +1018,10 @@ class AIService:
             ("condition_risks", _CONDITION_RISKS_KEYS, result_b),
         ):
             filled = {key: outcome[key] for key in keys if outcome.get(key) is not None}
-            if not filled:
+            if not filled and (section != "price_market" or call_a_needed):
                 failed_sections.append(section)
             merged.update(filled)
-        if len(failed_sections) == 2:
+        if len(failed_sections) == 2 or (not call_a_needed and failed_sections):
             raise next(
                 (r for r in results if isinstance(r, Exception)),
                 ValueError("model output has none of the expected sections"),
@@ -983,7 +1031,6 @@ class AIService:
         merged.setdefault("resale_potential", None)
         merged.setdefault("negotiation_tips", [])
         merged.setdefault("market_context", "")
-        merged.setdefault("best_pick", {"ad_id": None, "reason": ""})
         merged.setdefault("condition", None)
         merged.setdefault("watch_out", [])
         merged.setdefault("meeting_checklist", [])
@@ -1067,7 +1114,9 @@ class AIService:
             # RV-AI-04: competitor titles are other sellers' text — fence
             # them as data, like the buyer-side analysis does.
             competitor_lines: list[str] = []
-            for item in similar_listings[:6]:
+            # AI-REVIEW-3.5: numbered — the model answers with ``n`` and the
+            # router takes title, price and link from this same list.
+            for number, item in enumerate(similar_listings[:6], 1):
                 price = item.get("price_byn") or 0
                 cond = item.get("condition") or item.get("condition_label") or ""
                 seller = item.get("seller_type") or ""
@@ -1088,10 +1137,10 @@ class AIService:
                 meta = " · ".join(bits)
                 if title_text:
                     competitor_lines.append(
-                        f"- {title_text} ({meta})" if meta else f"- {title_text}"
+                        f"{number}. {title_text} ({meta})" if meta else f"{number}. {title_text}"
                     )
                 elif meta:
-                    competitor_lines.append(f"- {meta}")
+                    competitor_lines.append(f"{number}. {meta}")
             if competitor_lines:
                 ctx_lines.append(
                     fence_untrusted(competitor_lines, fence_nonce(safe_title, *competitor_lines))
@@ -1581,16 +1630,9 @@ class AIService:
             except json.JSONDecodeError:
                 continue
 
-        # Strategy 3: non-greedy regex (original behavior, but non-greedy
-        # to avoid capturing across multiple JSON objects)
-        json_match = re.search(r"\{.*?\}", text.strip(), flags=re.DOTALL)
-        if json_match:
-            candidate = json_match.group(0)
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                pass
-
+        # AI-REVIEW-3.12: the old third strategy (non-greedy ``\{.*?\}``)
+        # only ever matched what strategy 2 had already tried, or a cut
+        # from the outer "{" to the first inner "}" that never parses.
         logger.warning("AI returned non-JSON (%d chars): %s", len(text), text[:500])
         # Try to extract partial data from truncated JSON
         return _repair_truncated_json(text)

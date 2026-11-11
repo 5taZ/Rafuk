@@ -416,7 +416,8 @@ async def test_multimodal_rate_limit_retries_text_only(monkeypatch) -> None:
     )
 
     assert len(calls) == 4
-    assert isinstance(calls[0], list)
+    # AI-REVIEW-3.7: Call A prices from the text alone; only Call B gets photos.
+    assert isinstance(calls[0], str)
     assert isinstance(calls[1], list)
     assert isinstance(calls[2], str)
     assert isinstance(calls[3], str)

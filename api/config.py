@@ -210,17 +210,20 @@ class Settings(BaseSettings):
     ai_provider_name: str | None = None
     ai_provider_region: str | None = None
     ai_max_images: int = 3
-    ai_cache_hours: int = 1
-    ai_hourly_limit: int = 10
-    ai_daily_limit: int = 50
+    # AI-REVIEW-3.1: how long a complete model answer is shared. It quotes
+    # the market sample of its run, so it stays short of an hour; the
+    # 60 s market-estimate TTL it used before expired during the analysis
+    # itself, and nothing was ever served from the cache.
+    ai_result_cache_ttl: int = Field(default=1800, ge=0, le=86400)
     ai_proxy_url: str | None = None
     ai_analysis_timeout: int = 150
-    ai_quick_condition_timeout: int = 45
     ai_photo_precheck_timeout: int = 30
     ai_photo_precheck_enabled: bool = False
-    ai_chat_min_interval_seconds: float = 1.5
+    # AI-REVIEW-3.2: spacing between provider calls in one worker. 429s are
+    # retried with Retry-After, so this only smooths bursts; at 1.5 s three
+    # parallel analyses (six calls) waited 7.5 s just to start.
+    ai_chat_min_interval_seconds: float = 0.5
     ai_task_ttl: int = 3600
-    ai_fallback_cache_ttl: int = 1800
 
     # OPUS-12: internal service-to-service authentication. Lets the
     # bot call the API for arbitrary telegram_user_ids without

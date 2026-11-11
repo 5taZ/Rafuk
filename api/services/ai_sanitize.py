@@ -213,6 +213,34 @@ def scrub_pii(text: str, *, keep_numeric_ranges: bool = False) -> tuple[str, int
     return text, hits
 
 
+_SELLER_NAME_KEYS = frozenset({"name", "contact_person"})
+_NAME_WORD_RE = re.compile(r"[^\W\d_]{3,}")
+
+
+def mask_seller_names(text: str, ad: dict) -> str:
+    """LEGAL-03: replace a private seller's own name in their listing text.
+
+    The listing goes to an AI provider abroad; the seller is not our user
+    and never agreed to that. Kufar returns the profile name with the ad
+    (``account_parameters``), so whole-word occurrences of it are masked.
+    A shop's name is not personal data and stays.
+    """
+    if not text or ad.get("company_ad"):
+        return text
+    words = {
+        word
+        for param in ad.get("account_parameters") or ()
+        if isinstance(param, dict) and param.get("p") in _SELLER_NAME_KEYS
+        for word in _NAME_WORD_RE.findall(str(param.get("v") or param.get("vl") or ""))
+    }
+    if not words:
+        return text
+    pattern = r"(?<!\w)(?:" + "|".join(
+        re.escape(word) for word in sorted(words, key=len, reverse=True)
+    ) + r")(?!\w)"
+    return re.sub(pattern, "[имя]", text, flags=re.IGNORECASE)
+
+
 def sanitize_user_text(
     value: str | None,
     *,

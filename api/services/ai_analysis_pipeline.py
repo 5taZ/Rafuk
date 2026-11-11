@@ -46,7 +46,7 @@ from api.services.ai_marketplace import (
     normalize_scam_analysis,
 )
 from api.services.ai_quality import sanitize_public_ai_payload
-from api.services.ai_sanitize import scrub_model_payload, strip_html_in_payload
+from api.services.ai_sanitize import mask_seller_names, scrub_model_payload, strip_html_in_payload
 from api.services.ai_service import get_ai_service
 from api.services.ai_task_store import _get_task, _release_inflight, _update_task
 from api.services.kufar_client import KufarAPIError, KufarClient
@@ -55,7 +55,6 @@ from api.services.market_signals import anomaly_labels, detect_anomaly_flags
 from api.services.query_pipeline import load_query_dataset
 from api.services.reseller_tools import compute_deal_score
 from api.services.watchlist_market import (
-    MARKET_ESTIMATE_TTL,
     NO_COMPARABLE_PRICES,
     build_market_comparables,
     load_market_dataset,
@@ -99,10 +98,14 @@ logger = logging.getLogger(__name__)
 
 
 def _analysis_cache_key(payload: AIAnalysisRequest) -> str:
-    return (
-        f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:"
-        f"{payload.query}:cat={payload.category}"
-    )
+    # AI-REVIEW-3.1: Kufar search ignores case and extra spaces, so the
+    # cache does too — "iPhone 13" and "iphone 13 " share one answer.
+    query = " ".join(payload.query.casefold().split())
+    return f"ai_analysis:{_AI_CACHE_VERSION}:{payload.ad_id}:{query}:cat={payload.category}"
+
+
+def _ai_result_cache_ttl(settings: Any) -> int:
+    return int(getattr(settings, "ai_result_cache_ttl", 1800) or 0)
 
 
 _AI_ANALYSIS_ERRORS = (
@@ -405,7 +408,17 @@ def _get_pipeline_search_semaphore() -> asyncio.Semaphore:
 # Lazily bound to the running loop so test runs that create fresh
 # loops don't inherit the previous loop's semaphore (TEST-05 covers
 # the loop-bound bug class).
-_ANALYSIS_RUN_LIMIT = 1
+#
+# AI-REVIEW-3.2: the semaphore covers only the provider stages (photo
+# precheck + the two sub-calls), not the Kufar searches, and lets three
+# analyses through per worker. A slot is awaited for at most
+# _ANALYSIS_QUEUE_TIMEOUT, and the AI stage gets what is left of
+# _PIPELINE_BUDGET_SECONDS, so a queued task ends in a fallback before the
+# 240 s bg-task watchdog (which also counts the queue time) cancels it.
+_ANALYSIS_RUN_LIMIT = 3
+_ANALYSIS_QUEUE_TIMEOUT = 60.0
+_PIPELINE_BUDGET_SECONDS = 215.0
+_MIN_AI_STAGE_SECONDS = 30.0
 _analysis_run_semaphore: asyncio.Semaphore | None = None
 _analysis_run_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
@@ -423,6 +436,15 @@ def _get_analysis_run_semaphore() -> asyncio.Semaphore:
         _analysis_run_semaphore = asyncio.Semaphore(_ANALYSIS_RUN_LIMIT)
         _analysis_run_semaphore_loop = loop
     return _analysis_run_semaphore
+
+
+class _AnalysisQueueTimeoutError(TimeoutError):
+    """No provider slot freed up within _ANALYSIS_QUEUE_TIMEOUT."""
+
+
+def _ai_stage_timeout(c: Any) -> float:
+    remaining = _PIPELINE_BUDGET_SECONDS - (_time.monotonic() - c.started_at)
+    return min(float(c.analysis_timeout), max(_MIN_AI_STAGE_SECONDS, remaining))
 
 
 class _AnalysisComplete(Exception):  # noqa: N818
@@ -554,6 +576,11 @@ _PARTIAL_WARNINGS = {
 
 
 def _analysis_fallback_warning(exc: BaseException | None) -> str:
+    if isinstance(exc, _AnalysisQueueTimeoutError):
+        return (
+            "AI сейчас занят другими анализами. Показан рыночный черновик по данным "
+            "рынка — полный анализ можно повторить через минуту."
+        )
     if isinstance(exc, TimeoutError):
         return (
             "AI не успел ответить вовремя. Показан рыночный черновик по данным рынка — "
@@ -662,7 +689,9 @@ async def _stage_search(c: _AC) -> None:
     c.target_ad = target_ad
     c.datasets_by_cohort = datasets_by_cohort
     category = get_category_id(target_ad)
-    c.market_ads = []
+    # AI-REVIEW-3.4: None, not [], so a failed market lookup falls back to
+    # the cohort searches in _stage_extract instead of an empty market.
+    c.market_ads = None
     if category is not None:
         async with search_sem:
             market = await load_market_dataset(
@@ -676,8 +705,12 @@ async def _stage_search(c: _AC) -> None:
 
 def _stage_extract(c: _AC) -> None:
     """Extract target ad fields and compute market statistics."""
-    c.title = c.target_ad.get("subject", "") or c.target_ad.get("title", "")
-    c.description = c.target_ad.get("body", "") or c.target_ad.get("description", "")
+    c.title = mask_seller_names(
+        c.target_ad.get("subject", "") or c.target_ad.get("title", ""), c.target_ad,
+    )
+    c.description = mask_seller_names(
+        c.target_ad.get("body", "") or c.target_ad.get("description", ""), c.target_ad,
+    )
     # Pass the full ad dict so detect_price_type can distinguish "free"
     # (genuine giveaway, normalize -> 0.0) from "negotiable" (unknown
     # price, normalize -> None). Conflating them was a silent bug:
@@ -926,7 +959,7 @@ async def _stage_ai(c: _AC) -> None:
 
     try:
         c.result = await asyncio.wait_for(
-            _run_parallel_with_progress(), timeout=c.analysis_timeout
+            _run_parallel_with_progress(), timeout=_ai_stage_timeout(c)
         )
     except (httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
         logger.warning(
@@ -1108,7 +1141,7 @@ async def _stage_response(c: _AC) -> None:
         strip_html_in_payload(response.model_dump(by_alias=True))
     )
     if source == "ai":
-        ttl = int(MARKET_ESTIMATE_TTL - (_time.monotonic() - c.started_at))
+        ttl = _ai_result_cache_ttl(c.settings)
         if ttl > 0:
             await c.cache.set_json(_analysis_cache_key(c.payload), serialized, ttl=ttl)
     else:
@@ -1163,25 +1196,17 @@ async def _run_analysis(
         # the same instant. Acquire status is reported back as "queued"
         # via the task store so the client polling /ai/task/<id> doesn't
         # see a stuck "pending" while we wait for a slot.
-        run_sem = _get_analysis_run_semaphore()
-        if run_sem.locked():
-            try:
-                await _update_task(
-                    c.cache, c.task_id,
-                    user_id=c.user_id,
-                    stage="queued",
-                    progress=0,
-                )
-            except Exception:  # noqa: BLE001 — task store is best-effort
-                logger.debug("AI task %s: queued-stage update failed", task_id, exc_info=True)
         try:
-            async with run_sem:
-                await _stage_search(c)
-                await asyncio.to_thread(_stage_extract, c)
-                _stage_scoring(c)
+            await _stage_search(c)
+            await asyncio.to_thread(_stage_extract, c)
+            _stage_scoring(c)
+            await _acquire_provider_slot(c)
+            try:
                 await _stage_photo(c)
                 await _stage_ai(c)
-                await _stage_response(c)
+            finally:
+                _get_analysis_run_semaphore().release()
+            await _stage_response(c)
         except _AnalysisComplete:
             return
         except TimeoutError as exc:
@@ -1203,6 +1228,20 @@ async def _run_analysis(
     finally:
         if c.inflight_key:
             await _release_inflight(c.cache, c.inflight_key, c.task_id)
+
+
+async def _acquire_provider_slot(c: _AC) -> None:
+    """INF-02 / AI-REVIEW-3.2: wait (bounded) for a provider slot."""
+    run_sem = _get_analysis_run_semaphore()
+    if run_sem.locked():
+        try:
+            await _update_task(c.cache, c.task_id, user_id=c.user_id, stage="queued")
+        except Exception:  # noqa: BLE001 — task store is best-effort
+            logger.debug("AI task %s: queued-stage update failed", c.task_id, exc_info=True)
+    try:
+        await asyncio.wait_for(run_sem.acquire(), timeout=_ANALYSIS_QUEUE_TIMEOUT)
+    except TimeoutError:
+        raise _AnalysisQueueTimeoutError() from None
 
 
 async def _abort_cancelled_analysis(c: _AC) -> None:

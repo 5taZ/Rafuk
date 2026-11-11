@@ -75,11 +75,11 @@ async def consume_ai_quota(
         ) from exc
     snapshot = _read(usage, short_limit, weekly_limit)
     if not usage[4]:
-        blocked = [
-            (window, quota) for window, quota in (
-                ("5h", snapshot.five_hour), ("weekly", snapshot.weekly),
-            ) if quota.used >= quota.limit
-        ]
+        windows = (("5h", snapshot.five_hour), ("weekly", snapshot.weekly))
+        # AI-REVIEW-3.12: a refusal with no full window (a concurrent refund
+        # between the store's check and this read) used to max() an empty
+        # list and answer 500; it is reported against the 5-hour window.
+        blocked = [(w, q) for w, q in windows if q.used >= q.limit] or [windows[0]]
         window, quota = max(blocked, key=lambda item: item[1].resets_at or current)
         retry = max(1, math.ceil((quota.resets_at - current).total_seconds())) if (
             quota.resets_at

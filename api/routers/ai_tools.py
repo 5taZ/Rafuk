@@ -344,16 +344,46 @@ async def price_advice(
             )
             return response
 
+    # Fetch market data for context
+    from api.services.query_pipeline import load_query_dataset
+
+    dataset = await load_query_dataset(
+        query=payload.query,
+        # RV2-AI2-16: same casing as every other caller, so the dataset
+        # cache and singleflight keys are shared.
+        currency="BYN",
+        strict_search=True,
+        settings=get_settings(),
+        client=get_kufar_client(request),
+        category=payload.category,
+    )
+    stats = dataset.price_stats if dataset else None
+    if not _price_advice_stats_usable(stats):
+        # AI-REVIEW-3.8: _ground_price_advice turns any answer into "neutral"
+        # here, so the model is not called and no quota unit is spent.
+        return AIPriceAdviceResponse(
+            advice="neutral",
+            reasoning=(
+                "Недостаточно текущих объявлений для уверенного вывода: "
+                "сравните цену с похожими предложениями вручную."
+            ),
+            market_context=_NO_MARKET_CONTEXT,
+            confidence=0.0,
+        )
+
     charge = await _check_rate_limit(request, _user.user_id, endpoint="price_advice")
     try:
         return await _price_advice_answer(
             request, payload, ai=ai, user_id=_user.user_id, client_ip=client_ip,
-            cache=cache, cache_key=cache_key,
+            cache=cache, cache_key=cache_key, stats=stats,
         )
     except BaseException:
         # RV2-AI-12: no answer was delivered — give the unit back.
         await _refund_quota(cache, charge)
         raise
+
+
+_NO_MARKET_CONTEXT = "Недостаточно текущих рыночных данных для уверенного сравнения."
 
 
 async def _price_advice_answer(
@@ -365,6 +395,7 @@ async def _price_advice_answer(
     client_ip: str | None,
     cache,
     cache_key: str,
+    stats,
 ) -> AIPriceAdviceResponse:
     # AI audit trail (OPUS-17: capture client IP).
     await _log_ai_audit(
@@ -376,25 +407,9 @@ async def _price_advice_answer(
         ip_address=client_ip,
     )
 
-    # Fetch market data for context
-    kufar_client = get_kufar_client(request)
-    from api.services.query_pipeline import load_query_dataset
-
-    dataset = await load_query_dataset(
-        query=payload.query,
-        # RV2-AI2-16: same casing as every other caller, so the dataset
-        # cache and singleflight keys are shared.
-        currency="BYN",
-        strict_search=True,
-        settings=get_settings(),
-        client=kufar_client,
-        category=payload.category,
-    )
-
     # Build context with market data
-    stats = dataset.price_stats if dataset else None
     market_info = ""
-    current_market_context = "Недостаточно текущих рыночных данных для уверенного сравнения."
+    current_market_context = _NO_MARKET_CONTEXT
     if _price_advice_stats_usable(stats):
         market_info = (
             f"Медиана рынка: {stats.median:.0f} BYN\n"

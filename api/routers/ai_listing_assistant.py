@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import logging
 import re as _re
-import time
 from typing import Any
 
 import httpx
@@ -30,7 +29,7 @@ from api.services.aggregator import (
     get_category_id,
     normalize_price_byn,
 )
-from api.services.ai_analysis_pipeline import _AI_ANALYSIS_ERRORS
+from api.services.ai_analysis_pipeline import _AI_ANALYSIS_ERRORS, _ai_result_cache_ttl
 from api.services.ai_audit import _log_ai_audit
 from api.services.ai_category_data import (
     CATEGORY_HINTS,
@@ -59,7 +58,6 @@ from api.services.client_ip import get_client_ip
 from api.services.kufar_client import KufarAPIError, KufarClient
 from api.services.query_pipeline import load_query_dataset
 from api.services.watchlist_market import (
-    MARKET_ESTIMATE_TTL,
     NO_COMPARABLE_PRICES,
     build_market_comparables,
     listing_draft_target,
@@ -144,6 +142,16 @@ def _coerce_negotiation(raw: Any) -> list[AINegotiationCounter]:
     return items
 
 
+def _competitor_number(value: Any, available: int) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 1 <= number <= available else None
+
+
 def _coerce_competitors(
     raw: Any,
     *,
@@ -160,17 +168,31 @@ def _coerce_competitors(
         if ds_title:
             ds_lookup[(ds_title, ds_price)] = ds
 
+    picked: set[int] = set()
     for entry in raw:
         if not isinstance(entry, dict):
             continue
-        title = str(entry.get("title") or "").strip()
-        price = _coerce_price(entry.get("price_byn") or entry.get("price"))
         advantage = str(entry.get("advantage") or "").strip()
+        # AI-REVIEW-3.5: the prompt numbers the first six competitors and the
+        # model answers with that number, so title and price come from the
+        # dataset instead of being copied back (and fuzzy-matched) as text.
+        number = _competitor_number(entry.get("n"), len((dataset_competitors or [])[:6]))
+        if number is not None:
+            if number in picked:
+                continue
+            picked.add(number)
+            match = (dataset_competitors or [])[number - 1]
+            title = str(match.get("title") or "").strip()
+            price = _coerce_price(match.get("price_byn"))
+        else:
+            match = None
+            title = str(entry.get("title") or "").strip()
+            price = _coerce_price(entry.get("price_byn") or entry.get("price"))
         if not title or price is None:
             continue
         image_url: str | None = None
         link: str = ""
-        match = ds_lookup.get((title.lower()[:60], int(round(price))))
+        match = match or ds_lookup.get((title.lower()[:60], int(round(price))))
         if not match:
             # Fuzzy: try matching by price only among same-price items
             for key, ds in ds_lookup.items():
@@ -556,7 +578,6 @@ async def _draft_listing(
     audit_model: str,
     client_ip: str | None,
 ) -> AIListingAssistantResponse:
-    started_at = time.monotonic()
     # AI audit trail (Belarus Law No. 99-З) — cache miss path.
     await _log_ai_audit(
         request.app.state.session_factory,
@@ -695,7 +716,7 @@ async def _draft_listing(
     serialized = sanitize_public_ai_payload(
         strip_html_in_payload(response.model_dump(mode="json"))
     )
-    cache_ttl = int(MARKET_ESTIMATE_TTL - (time.monotonic() - started_at))
+    cache_ttl = _ai_result_cache_ttl(settings)
     if cache_ttl > 0:
         await cache.set_json(cache_key, serialized, ttl=cache_ttl)
     return AIListingAssistantResponse.model_validate(serialized)

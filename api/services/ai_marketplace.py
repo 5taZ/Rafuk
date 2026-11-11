@@ -18,6 +18,7 @@ from api.services.aggregator import (
 from api.services.ai_category_data import detect_category, normalize_condition_label
 from api.services.ai_guardrails import contains_financing_bait
 from api.services.ai_quality import filter_specific_advice, is_generic_ai_advice
+from api.services.ai_sanitize import mask_seller_names
 from api.services.listing_mapper import SENSITIVE_AD_PARAMETER_KEYS, first_image_url
 from api.services.reseller_tools import analyze_query_text
 from api.services.risk_detector import find_prepayment_signals
@@ -1991,7 +1992,9 @@ def collect_similar_listings_from_cohorts(
                 "link": ad.get("ad_link", f"https://www.kufar.by/item/{ad_id}"),
                 "deal_score": round(score, 1),
                 "condition": candidate_condition,
-                "description": str(ad.get("body", "") or ad.get("description", ""))[:300],
+                "description": mask_seller_names(
+                    str(ad.get("body", "") or ad.get("description", "")), ad,
+                )[:300],
                 "seller_type": "shop" if ad.get("company_ad") else "private",
                 "parameters": _ad_parameters_string(ad),
                 "age_days": _parse_age_days(ad.get("list_time")),

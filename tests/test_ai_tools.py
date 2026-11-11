@@ -275,7 +275,8 @@ def test_price_advice_forces_neutral_when_market_sample_is_empty(monkeypatch) ->
     assert "недостаточно" in body["reasoning"].lower()
     assert "недостаточно" in body["market_context"].lower()
     assert body["confidence"] <= 0.35
-    assert "Медиана рынка: 0" not in fake_ai.calls[0]["content"]
+    # AI-REVIEW-3.8: the answer is fixed without a market, so no model call.
+    assert fake_ai.calls == []
 
 
 def test_price_advice_overrides_buy_now_when_price_is_above_market(monkeypatch) -> None:
