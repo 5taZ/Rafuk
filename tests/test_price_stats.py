@@ -281,6 +281,10 @@ def test_price_stats_strict_search_total_results_uses_filtered_count(monkeypatch
     # strict_search=True: total_results must equal post-strict filtered count (4),
     # not Kufar's raw broad total (7).
     assert payload["total_results"] == 4
+    # Kufar's loose count and the sample we read travel along so the UI can
+    # explain why kufar.by shows more listings than the strict result.
+    assert payload["kufar_total"] == 7
+    assert payload["scanned_count"] == 7
 
 
 def test_price_stats_non_strict_total_results_uses_kufar_total(monkeypatch) -> None:

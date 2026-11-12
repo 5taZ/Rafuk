@@ -220,7 +220,7 @@ def listing_draft_target(
                 identity and _iphone_model(name) == identity
             ):
                 exact.add(candidate_category)
-            elif is_strict_match(name, title):
+            elif is_strict_match(name, title, category_id=candidate_category):
                 matching.add(candidate_category)
         categories = exact or matching
         category = next(iter(categories)) if len(categories) == 1 else None
@@ -319,7 +319,7 @@ def build_market_comparables(
             if (_macbook_model(candidate_title) or _iphone_model(candidate_title)) != device_model:
                 continue
         else:
-            if not is_strict_match(_identity(ad, category), identity):
+            if not is_strict_match(_identity(ad, category), identity, category_id=category):
                 continue
             if (
                 category != _CAR_CATEGORY

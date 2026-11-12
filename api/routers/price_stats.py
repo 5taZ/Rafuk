@@ -241,6 +241,8 @@ async def get_price_stats(
         count=stats.count,
         total_results=effective_total,
         analyzed_count=stats.count,
+        kufar_total=dataset.total_results,
+        scanned_count=len(dataset.response.get("ads") or []),
         strict_search=dataset.strict_search,
         fallback_used=fb.fallback_used,
         histogram=histogram,

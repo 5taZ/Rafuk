@@ -93,6 +93,111 @@ def test_is_strict_match_rejects_extra_variant_tokens() -> None:
     assert is_strict_match("iPhone 15 Pro Max 256GB", "iphone 15 pro") is False
 
 
+def test_is_strict_match_binds_model_number_to_family_word() -> None:
+    # SEARCH-18: private/used listings often name the OS version, which
+    # used to satisfy the model number by plain token containment.
+    query = "iphone 18 pro"
+    for title in (
+        "iPhone 15 pro (18 IOS)",
+        "iPhone 12 Pro 128Gb Graphite (18 ios)",
+        "iPhone 15 Pro 128gb Black Titanium iOS 18",
+        "iPhone 16 pro 256 esim ios 18.7",
+    ):
+        assert is_strict_match(title, query) is False, title
+    for title in (
+        "iPhone 18 Pro Активированный 100%",
+        "Обмен iPhone 18 pro бургунди на 256 гб",
+        "Apple Iphone 18 Pro Burgundy",
+        "Айфон 18 Pro 256",
+        "Чехол для iPhone 17/18 Pro",
+    ):
+        assert is_strict_match(title, query) is True, title
+    assert is_strict_match("Audi A6 C7 2.0 TDI 2015", "audi a6 2015") is True
+    assert is_strict_match("MacBook Pro 16 M3 (14 cores)", "macbook pro 14 m3") is False
+    assert is_strict_match("MacBook Pro 14 M3", "macbook pro 14 m3") is True
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    # SEARCH-19: Cyrillic variants after a model number or family word.
+    ("Айфон 15 про", "iphone 15 pro"),
+    ("iPhone 15 про мах", "iphone 15 pro max"),
+    ("айфон15промакс", "iphone 15 pro max"),
+    ("macbook эйр m2", "macbook air m2"),
+    ("Про машину 15 лет", "про машину 15 лет"),
+    ("BMW X5 макс комплектация", "bmw x5 макс комплектация"),
+    ("iphone 13 128 плюс чехол", "iphone 13 128 плюс чехол"),
+    # SEARCH-19: apostrophes, glued model codes, the Plus suffix.
+    ("Levi's 501", "levis 501"),
+    ("Джинсы Левис 501", "джинсы levis 501"),
+    ("RX580 8GB", "rx 580 8"),
+    ("RTX 3060Ti", "rtx 3060 ti"),
+    ("1660super", "1660 super"),
+    ("s24ultra", "s24 ultra"),
+    ("Samsung Galaxy S24+", "samsung galaxy s24 plus"),
+    ("Redmi Note 13 Pro+", "redmi note 13 pro plus"),
+    ("iPhone 8+", "iphone 8 plus"),
+    ("GTA 5 18+", "gta 5 18"),
+    ("Sapphire Nitro+ RX 580", "sapphire nitro rx 580"),
+    ("8+128gb", "8 128"),
+    # SEARCH-19: whole-word aliases; "обычная" is "fat" only next to a console.
+    ("поколение кабриолет попсокет", "поколение кабриолет попсокет"),
+    ("Куртка обычная", "куртка обычная"),
+    ("ps5 обычная", "ps5 fat"),
+    ("PlayStation 5 Slim, обычная", "ps5 slim обычная"),
+    ("ps5 + ps plus", "ps5 psplus"),
+    ("пс5", "ps5"),
+])
+def test_normalize_search_text_spellings(text: str, expected: str) -> None:
+    assert normalize_search_text(text) == expected
+
+
+def test_strict_match_handles_spelling_variants() -> None:
+    # SEARCH-19: live Kufar titles that strict search used to drop or let in.
+    assert is_strict_match("iPhone 15 Pro 256Gb Blue", "айфон 15 про") is True
+    assert is_strict_match("Айфон 15 про мах реплика", "айфон 15 про") is False
+    assert is_strict_match("Джинсы Levi's 501 original", "джинсы levis 501") is True
+    assert is_strict_match("RX580  8 гб", "rx 580 8gb") is True
+    assert is_strict_match("Видеокарта RTX 3060Ti", "rtx 3060") is False
+    assert is_strict_match("Samsung Galaxy S24+", "samsung s24") is False
+    assert is_strict_match("Ps5 slim + гарантия + ps plus 9 месяцев", "ps5 slim") is True
+    assert is_strict_match("Куртка зимняя обычная", "куртка зимняя") is True
+
+
+def test_strict_match_ignores_variant_words_in_apparel() -> None:
+    # SEARCH-19: "Air", "Max", "Lite" are sneaker lines, not device variants.
+    title = "Кроссовки Nike Air Max 95, размер 41-42"
+    assert is_strict_match(title, "кроссовки nike 42") is False
+    for category_id in (19020, 8100, 12020):
+        assert is_strict_match(title, "кроссовки nike 42", category_id=category_id) is True
+    assert is_strict_match("Samsung S24 Ultra", "samsung s24", category_id=17010) is False
+    ads = [
+        {"ad_id": 1, "subject": title, "category": "19020"},
+        {"ad_id": 2, "subject": "Кроссовки Nike 42", "category": "19020"},
+        {"ad_id": 3, "subject": "Кроссовки Nike T-Lite XI 42", "category": "8100"},
+    ]
+    assert [ad["ad_id"] for ad in apply_search_mode(ads, "кроссовки nike 42", True)] == [1, 2, 3]
+
+
+def test_whole_word_aliases_keep_generation_and_accessory_words() -> None:
+    # SEARCH-19: "поко" → "poco" inside "поколение" hid the generation from
+    # the watchlist market, "пс" → "ps" inside "попсокет" hid the AI type.
+    from api.services.ai_marketplace import _accessory_type_similarity_bonus
+    from api.services.watchlist_market import _generation
+
+    assert _generation("Volkswagen Golf 4 поколение") == "4"
+    assert _accessory_type_similarity_bonus(
+        "phone_accessory", normalize_search_text("Попсокет iPhone 14"),
+        normalize_search_text("попсокет для iphone 14"),
+    ) > 0
+
+
+def test_query_key_keeps_its_original_normalization() -> None:
+    # SEARCH-19: keys are persisted; a changed key re-alerts a tracker's page.
+    assert build_query_key("айфон 15 про", True) == "strict::iphone 15 про"
+    assert build_query_key("Levi's 501", False, 19010) == "broad::cat:19010::levi s 501"
+    assert build_query_key("ps5 обычная", True) == "strict::ps5 fat"
+
+
 def test_apply_search_mode_filters_ads_in_strict_mode() -> None:
     ads = [
         {"ad_id": 1, "subject": "iPhone 15 256GB"},

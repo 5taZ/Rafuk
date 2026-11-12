@@ -101,6 +101,10 @@ class PriceStatsResponse(BaseModel):
     histogram: list[PriceHistogramBin] = Field(default_factory=list)
     total_results: int = 0
     analyzed_count: int = 0
+    # Kufar's own loose count for the query and how many of the newest ads
+    # we actually read; the UI states both so "981 vs 101" is explained.
+    kufar_total: int = 0
+    scanned_count: int = 0
     fair_price_from: float | None = None
     fair_price_to: float | None = None
     categories: list[CategoryBucket] = Field(default_factory=list)

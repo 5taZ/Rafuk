@@ -6,6 +6,7 @@ import re
 import statistics
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import takewhile
 from typing import Any
 
 from pydantic import BaseModel
@@ -47,6 +48,8 @@ STRICT_VARIANT_TOKENS = {
     "fat",
     "ti",
     "super",
+    "xt",
+    "xtx",
     "se",
     "xs",
     "xr",
@@ -215,6 +218,104 @@ def _apply_aliases(text: str) -> str:
     return text
 
 
+def _finish_normalization(text: str) -> str:
+    text = _GB_RE.sub(r"\1", text)
+    text = _GB_CYR_RE.sub(r"\1", text)
+    text = _SLASH_RE.sub(r"\1 \2", text)
+    text = _TB_RE.sub(lambda match: str(int(match.group(1)) * 1024), text)
+    text = _NONALNUM_RE.sub(" ", text)
+    return " ".join(text.split())
+
+
+@lru_cache(maxsize=4096)
+def _query_key_text(value: str) -> str:
+    # SEARCH-19: query keys are persisted (query_listing_states,
+    # query_snapshots, tracker events). A tracker whose key changes meets
+    # every ad on its page as a first sighting and alerts them all, so the
+    # key keeps the original substring-alias normalisation; matching uses
+    # normalize_search_text below.
+    return _finish_normalization(_apply_aliases(value.casefold()))
+
+
+# SEARCH-19: matching aliases replace whole words only. Substring
+# replacement corrupted ordinary words ("поколение" → "pocoление",
+# "кабриолет" → "кабriолет", "попсокет" → "поpsокет") and turned the
+# adjective "обычная" into the variant "fat" in any title; "fat" now needs
+# a console next to it. A digit may touch an alias ("айфон15").
+_MATCH_ALIASES = {
+    **{key: value for key, value in SEARCH_ALIASES.items() if key not in {"обычная", "обычный"}},
+    **{
+        f"{left} {right}" if first else f"{right} {left}": (
+            f"{left} fat" if first else f"fat {left}"
+        )
+        for left in ("ps4", "ps5")
+        for right in ("обычная", "обычный")
+        for first in (True, False)
+    },
+    "промакс": "pro max",
+    "эйр": "air",
+    "левис": "levis",
+    "ps plus": "psplus",
+}
+_MATCH_ALIAS_PATTERN = re.compile(
+    r"(?<![a-zа-я])(?:"
+    + "|".join(re.escape(k) for k in sorted(_MATCH_ALIASES, key=len, reverse=True))
+    + r")(?![a-zа-я])"
+)
+# SEARCH-19: Russian titles spell variants in Cyrillic ("айфон 15 про").
+# Only after a model number or a product family word: "про" is also a
+# preposition, "плюс"/"макс" also mean "plus"/"maximum".
+_RU_VARIANTS = {
+    "про": "pro", "плюс": "plus", "мини": "mini", "ультра": "ultra", "лайт": "lite",
+    "макс": "max", "мах": "max",
+}
+_RU_VARIANT_RE = re.compile(
+    r"(?<![a-zа-я0-9])(\d{1,2}|[a-z]+\d+[a-z]*|iphone|ipad|macbook|airpods|galaxy|redmi|"
+    r"note|ps|ps4|ps5)\s+(про|плюс|мини|ультра|лайт)(?![a-zа-я0-9])"
+    r"|(?<![a-zа-я0-9])(pro|xs|\d{1,2})\s+(макс|мах)(?![a-zа-я0-9])"
+    r"|(?<![a-zа-я0-9])(\d{1,2})(про|плюс|мини|ультра|макс)(?![a-zа-я0-9])"
+)
+# SEARCH-19: glued model codes ("RX580", "3060Ti", "s24ultra") tokenise
+# like their spaced spelling. "ps5" stays one token on purpose.
+_GLUED_PREFIX_RE = re.compile(r"(?<![a-zа-я0-9])(rtx|gtx|rx|gt|iphone|ipad)(?=\d)")
+_GLUED_VARIANT_RE = re.compile(
+    r"(?<=\d)(?=(?:pro|max|plus|mini|ultra|lite|ti|super|xtx|xt|fe|se)(?![a-zа-я0-9]))"
+)
+# SEARCH-19: "S24+" / "Pro+" / "iPhone 8+" are the Plus models. A bare
+# number ("18+") or a series name ("Nitro+") is not.
+_MODEL_PLUS_RE = re.compile(
+    r"(?<![a-zа-я0-9])([a-z]+\d+[a-z]*|pro|max|ultra|note|iphone \d{1,2})\+(?![a-zа-я0-9])"
+)
+# SEARCH-19: "Levi's" and "levis" are one brand.
+_APOSTROPHE_RE = re.compile(r"[’'`ʼ]")
+
+
+def _match_alias_sub(match: re.Match[str]) -> str:
+    return _MATCH_ALIASES[match.group(0)]
+
+
+def _ru_variant_sub(match: re.Match[str]) -> str:
+    groups = match.groups()
+    left, variant = next(
+        (groups[i], groups[i + 1]) for i in range(0, len(groups), 2) if groups[i] is not None
+    )
+    return f"{left} {_RU_VARIANTS[variant]}"
+
+
+def _apply_match_rewrites(text: str) -> str:
+    text = _APOSTROPHE_RE.sub("", text)
+    for _ in range(_ALIAS_MAX_PASSES):
+        new_text = _MATCH_ALIAS_PATTERN.sub(_match_alias_sub, text)
+        new_text = _GLUED_PREFIX_RE.sub(r"\1 ", new_text)
+        new_text = _GLUED_VARIANT_RE.sub(" ", new_text)
+        new_text = _RU_VARIANT_RE.sub(_ru_variant_sub, new_text)
+        new_text = _MODEL_PLUS_RE.sub(r"\1 plus", new_text)
+        if new_text == text:
+            return new_text
+        text = new_text
+    return text
+
+
 # Cached per-string normaliser. The same query / title is processed
 # repeatedly (e.g. by precompute_cluster_stats which used to be O(n²)
 # in the number of ads, multiplied by the ~150 replace+regex ops in
@@ -223,14 +324,7 @@ def _apply_aliases(text: str) -> str:
 # ads) plus search inputs without thrashing.
 @lru_cache(maxsize=4096)
 def normalize_search_text(value: str) -> str:
-    text = value.casefold()
-    text = _apply_aliases(text)
-    text = _GB_RE.sub(r"\1", text)
-    text = _GB_CYR_RE.sub(r"\1", text)
-    text = _SLASH_RE.sub(r"\1 \2", text)
-    text = _TB_RE.sub(lambda match: str(int(match.group(1)) * 1024), text)
-    text = _NONALNUM_RE.sub(" ", text)
-    return " ".join(text.split())
+    return _finish_normalization(_apply_match_rewrites(value.casefold()))
 
 
 def tokenize_search_text(value: str) -> list[str]:
@@ -240,13 +334,26 @@ def tokenize_search_text(value: str) -> list[str]:
 
 def build_query_key(query: str, strict_search: bool, category_id: int | None = None) -> str:
     mode = "strict" if strict_search else "broad"
-    normalized = normalize_search_text(query)
+    normalized = _query_key_text(query)
     if category_id is None:
         return f"{mode}::{normalized}"
     return f"{mode}::cat:{category_id}::{normalized}"
 
 
-def is_strict_match(title: str, query: str) -> bool:
+# SEARCH-19: in clothing, shoes and personal accessories "Air", "Max",
+# "Lite", "Pro", "Sport", "Slim" name a sneaker line or describe a cut —
+# they are not a different device. Women's (8xxx) and men's (19xxx)
+# things, wedding and carnival wear, children's clothes and shoes.
+_APPAREL_CATEGORY_IDS = frozenset({9020, 9070, 12010, 12020, 12120, 12140, 12150, 12170})
+
+
+def uses_variant_tokens(category_id: int | None) -> bool:
+    return category_id is None or not (
+        category_id // 1000 in {8, 19} or category_id in _APPAREL_CATEGORY_IDS
+    )
+
+
+def is_strict_match(title: str, query: str, *, category_id: int | None = None) -> bool:
     """Check if a listing title strictly matches the search query.
 
     A strict match requires:
@@ -265,10 +372,39 @@ def is_strict_match(title: str, query: str) -> bool:
     if not all(token in title_set for token in query_tokens):
         return False
 
-    query_variants = {token for token in query_tokens if token in STRICT_VARIANT_TOKENS}
-    title_variants = {token for token in title_tokens if token in STRICT_VARIANT_TOKENS}
-    extra_variants = title_variants - query_variants
-    return not extra_variants
+    if uses_variant_tokens(category_id):
+        query_variants = {token for token in query_tokens if token in STRICT_VARIANT_TOKENS}
+        title_variants = {token for token in title_tokens if token in STRICT_VARIANT_TOKENS}
+        if title_variants - query_variants:
+            return False
+    return _model_number_matches(title_tokens, query_tokens)
+
+
+def _model_number_matches(title_tokens: list[str], query_tokens: list[str]) -> bool:
+    """Keep the query's model number bound to its family word.
+
+    SEARCH-18: token containment let "iphone 18 pro" match
+    "iPhone 15 Pro (18 IOS)" — the 18 is the OS version. The first
+    numeric query token after a purely alphabetic word is the model
+    number; when the title puts a different number right after that
+    word, the listing is another model. Runs of numbers ("iPhone 17/18")
+    count as one slot, and a word followed by text ("Audi A6 C7 2015")
+    leaves the title alone.
+    """
+    index = next((i for i, token in enumerate(query_tokens) if token.isdigit()), 0)
+    anchor = query_tokens[index - 1] if index else ""
+    if not anchor.isalpha():
+        return True
+    model = query_tokens[index]
+    conflict = False
+    for position, token in enumerate(title_tokens):
+        if token != anchor:
+            continue
+        run = list(takewhile(str.isdigit, title_tokens[position + 1:]))
+        if model in run:
+            return True
+        conflict = conflict or bool(run)
+    return not conflict
 
 
 def apply_search_mode(
@@ -278,7 +414,10 @@ def apply_search_mode(
 ) -> list[dict[str, Any]]:
     if not strict_search:
         return ads
-    return [ad for ad in ads if is_strict_match(str(ad.get("subject", "")), query)]
+    return [
+        ad for ad in ads
+        if is_strict_match(str(ad.get("subject", "")), query, category_id=get_category_id(ad))
+    ]
 
 
 # Minimum number of similar listings required for a cluster-specific
@@ -360,7 +499,9 @@ def find_similar_listings(
     """
     similar = [
         ad for ad in all_ads
-        if is_strict_match(str(ad.get("subject", "")), target_title)
+        if is_strict_match(
+            str(ad.get("subject", "")), target_title, category_id=get_category_id(ad),
+        )
     ]
     if len(similar) >= MIN_CLUSTER_SIZE:
         return similar
@@ -432,7 +573,10 @@ def _precompute_cluster_stats_sync(
         tokens = tokenize_search_text(str(ad.get("subject", "")))
         token_set = frozenset(tokens)
         token_sets.append(token_set)
-        variant_sets.append(token_set & STRICT_VARIANT_TOKENS)
+        variant_sets.append(
+            token_set & STRICT_VARIANT_TOKENS
+            if uses_variant_tokens(get_category_id(ad)) else frozenset()
+        )
         prices.append(normalize_price_byn(ad.get("price_byn"), ad) if tokens else None)
         for token in token_set:
             postings.setdefault(token, []).append(i)
