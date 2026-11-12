@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from tests._shell import bash_executable
 
 
 def test_backup_script_decodes_postgres_url_credentials(tmp_path: Path) -> None:
@@ -52,10 +53,10 @@ exit 2
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
     }
     result = subprocess.run(
-        [shutil.which("bash") or "bash", "scripts/backup.sh"],
+        [bash_executable(), "scripts/backup.sh"],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
-        text=True,
+        text=True, encoding="utf-8",
         capture_output=True,
         check=True,
     )

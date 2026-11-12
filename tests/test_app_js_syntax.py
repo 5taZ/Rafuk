@@ -8,6 +8,9 @@ APP_JS = Path("frontend/js/app.js")
 JS_DIR = Path("frontend/js")
 JS_MODULES = sorted(JS_DIR.glob("*.js"))
 CSS_DIR = Path("frontend/css")
+# PRJ-REVIEW-11: decode node's output as UTF-8, not the Windows code page
+# (cp1251 raised UnicodeEncodeError on the Russian strings in the harnesses).
+_UTF8 = {"text": True, "encoding": "utf-8"}
 
 
 def _read_all_css() -> str:
@@ -112,7 +115,7 @@ assert.strictEqual(core.formatPrice(null), "Договорная");
 assert.strictEqual(core.formatPrice(0, "free"), "Бесплатно");
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
     assert "тыс. р." not in app_core_js
     assert "`к`" not in render_core_js
@@ -206,7 +209,7 @@ api.loadListings(true).then(() => {
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -245,7 +248,7 @@ api.requestJson("/api/v1/admin/statuses/scout", { method: "PATCH" })
     });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -295,7 +298,7 @@ const api = createApiAdmin({
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -351,7 +354,7 @@ const api = window.App.createApiAi({
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -441,7 +444,7 @@ setImmediate(() => {
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -683,7 +686,7 @@ api.addWatchlistFromListing({
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -824,7 +827,7 @@ def test_pinch_zoom_caches_viewport_size_for_gestures() -> None:
 
 def test_node_syntax_check() -> None:
     for script in JS_MODULES:
-        result = subprocess.run(["node", "--check", str(script)], capture_output=True, text=True)
+        result = subprocess.run(["node", "--check", str(script)], capture_output=True, **_UTF8)
         assert result.returncode == 0, f"{script}: {result.stderr}"
 
 
@@ -902,7 +905,7 @@ assertEq(core.openExternalLink("javascript:alert(1)"), false, "reject script URL
 assertEq(windowOpenCalls.length, 1, "invalid URL not opened");
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -1071,7 +1074,7 @@ const renderer = createRenderModals({
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -1343,7 +1346,7 @@ renderer.renderDetailModal();
 assert.match(elements.detailDescription.textContent, /временно недоступно/);
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -1504,7 +1507,7 @@ globalThis.fetch = async (url, options) => {
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -1656,12 +1659,12 @@ console.log("OK");
     harness = harness.replace("// __RESTORE__", restore_match.group(0))
 
     import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as tmp:
         tmp.write(harness)
         tmp_path = tmp.name
     try:
         result = subprocess.run(
-            ["node", tmp_path], capture_output=True, text=True, timeout=15,
+            ["node", tmp_path], capture_output=True, **_UTF8, timeout=15,
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -1719,7 +1722,7 @@ keydownHandler({{
 if (!prevented) throw new Error("Tab on dynamically-added last item must be trapped");
 if (document.activeElement !== first) throw new Error("Tab should wrap to recomputed first item");
 """
-    subprocess.run(["node", "-e", harness], check=True, text=True)
+    subprocess.run(["node", "-e", harness], check=True, **_UTF8)
 
 
 def test_secondary_tablists_share_roving_keyboard_helper() -> None:
@@ -2059,7 +2062,7 @@ async function run(hostname, protocol) {
 });
 """
     )
-    result = subprocess.run(["node"], input=harness, capture_output=True, text=True)
+    result = subprocess.run(["node"], input=harness, capture_output=True, **_UTF8)
     assert result.returncode == 0, result.stderr
 
 
@@ -3526,7 +3529,7 @@ _DOMAIN_HELPERS_JS = _domain_helpers_js()
 
 
 def _node_ok(script: str) -> None:
-    result = subprocess.run(["node"], input=script, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(["node"], input=script, capture_output=True, **_UTF8, timeout=120)
     assert result.returncode == 0, result.stderr or result.stdout
 
 

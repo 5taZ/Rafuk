@@ -99,6 +99,7 @@ from bot.keyboards import (
     tracker_alert_keyboard,
 )
 from bot.notifications import MAX_NOTIFICATION_PHOTOS, send_album_actions, send_notification
+from scheduler.job_lock import single_run
 from scheduler.messages import (
     _build_new_listing_message,
     _build_price_drop_message,
@@ -107,6 +108,7 @@ from scheduler.messages import (
     _description_preview,
     _format_price_byn,  # noqa: F401 — back-compat import for tests/external callers
 )
+from scheduler.ops_watchdog import mark_tick_completed, run_ops_watchdog
 
 # RV-SCH-02: time budget for the search-key loop of one tracker tick. Once
 # it is spent no new key is started; the key in flight finishes and commits
@@ -875,7 +877,22 @@ async def check_trackers(
         # outbox already — deliver them now, not at the next pump run.
         await _drain_notification_outbox(bot, session_factory)
         raise
+    mark_tick_completed()
     await _drain_notification_outbox(bot, session_factory)
+
+
+async def run_ops_checks(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+) -> None:
+    """PRJ-REVIEW-1: alert the admins about this scheduler's own health."""
+    client = _kufar_client[2] if _kufar_client is not None else None
+    await run_ops_watchdog(
+        bot, session_factory, settings,
+        cache=_get_market_cache(settings),
+        kufar_open=bool(client is not None and client.circuit_open),
+    )
 
 
 @dataclass(slots=True)
@@ -1962,7 +1979,7 @@ def create_scheduler(
     # a late tick still runs once instead of vanishing or stacking.
     _job_defaults = {"misfire_grace_time": 60, "coalesce": True}
     scheduler.add_job(
-        check_trackers,
+        single_run("tracker-check", check_trackers),
         trigger="cron",
         minute="*",
         next_run_time=datetime.now(UTC),
@@ -1973,7 +1990,7 @@ def create_scheduler(
     )
     # Daily cleanup of old events and inactive listings
     scheduler.add_job(
-        run_cleanup,
+        single_run("daily-cleanup", run_cleanup),
         trigger="cron",
         hour=3,  # Run at 3 AM
         minute=0,
@@ -1988,7 +2005,7 @@ def create_scheduler(
     )
     # Check due reminders every 15 minutes
     scheduler.add_job(
-        check_reminders,
+        single_run("reminder-check", check_reminders),
         trigger="interval",
         minutes=15,
         kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
@@ -2001,11 +2018,20 @@ def create_scheduler(
     # a real second chance instead of waiting for the daily
     # cleanup to wipe them.
     scheduler.add_job(
-        retry_telegram_notification_dlq,
+        single_run("dlq-retry", retry_telegram_notification_dlq),
         trigger="interval",
         minutes=_DLQ_RETRY_TICK_MINUTES,
         kwargs={"bot": bot, "session_factory": session_factory},
         id="dlq-retry",
+        replace_existing=True,
+        **_job_defaults,
+    )
+    scheduler.add_job(
+        single_run("ops-watchdog", run_ops_checks),
+        trigger="interval",
+        minutes=5,
+        kwargs={"bot": bot, "session_factory": session_factory, "settings": settings},
+        id="ops-watchdog",
         replace_existing=True,
         **_job_defaults,
     )

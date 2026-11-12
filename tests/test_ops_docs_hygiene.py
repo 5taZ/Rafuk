@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import runpy
-import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +10,8 @@ from unittest import mock
 import yaml
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+
+from tests._shell import bash_executable
 
 
 def _workflow() -> dict:
@@ -273,11 +274,11 @@ def test_static_version_bump_updates_service_worker_cache(tmp_path: Path) -> Non
     )
 
     subprocess.run(
-        [shutil.which("bash") or "bash", "scripts/bump_static_version.sh", "new-tag"],
+        [bash_executable(), "scripts/bump_static_version.sh", "new-tag"],
         cwd=work,
         check=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
 
     assert "?v=new-tag" in (work / "frontend" / "index.html").read_text(encoding="utf-8")

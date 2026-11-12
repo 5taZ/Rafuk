@@ -13,6 +13,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRIVATE_NAMES = {".env", "DEEP_DIVE_REVIEW_COMPREHENSIVE.md", "notmyfault.md"}
+RUNTIME_DIRS = ("api/", "bot/", "scheduler/", "migrations/", "frontend/", "assets/", "nginx/")
+
+
+def _git_names(root: Path, *args: str) -> list[str]:
+    output = subprocess.check_output(["git", *args, "-z"], cwd=root).decode()
+    return [name for name in output.split("\0") if name]
+
+
+def untracked_runtime_files(root: Path) -> list[str]:
+    """PRJ-REVIEW-2: the release packs tracked files only, so a new module
+    nobody ran ``git add`` on was silently left out and the release crashed
+    on import (or rolled back) on the server."""
+    return [name for name in _git_names(root, "ls-files", "--others", "--exclude-standard")
+            if name.startswith(RUNTIME_DIRS)]
+
+
+def uncommitted_files(root: Path) -> list[str]:
+    """Tracked files whose working copy differs from HEAD (what the release
+    ships beyond its ``git_revision``)."""
+    return sorted(set(_git_names(root, "diff", "--name-only", "HEAD")))
 
 
 def release_files(root: Path) -> list[Path]:
@@ -39,6 +59,12 @@ def release_files(root: Path) -> list[Path]:
 
 def build_release(root: Path) -> dict:
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root).decode().strip()
+    if untracked := untracked_runtime_files(root):
+        raise ValueError(
+            "Untracked runtime files would be left out of the release; git add them first: "
+            + ", ".join(untracked)
+        )
+    uncommitted = uncommitted_files(root)
     contents = {}
     for path in release_files(root):
         data = path.read_bytes()
@@ -50,6 +76,7 @@ def build_release(root: Path) -> dict:
     now = datetime.now(UTC)
     release = f"{now:%Y%m%d-%H%M%S}-{revision[:7]}-{digest[:8]}"
     manifest = {"release": release, "git_revision": revision,
+                "git_dirty": bool(uncommitted), "uncommitted_files": uncommitted,
                 "created_at": now.isoformat(), "files": hashes}
     contents["DEPLOYMENT.json"] = json.dumps(manifest, indent=2).encode()
     contents["REVISION"] = (release + "\n").encode()
@@ -64,6 +91,7 @@ def build_release(root: Path) -> dict:
             entry.mode = 0o755 if executable else 0o644
             output.addfile(entry, io.BytesIO(data))
     return {"release": release, "archive": str(archive), "file_count": len(hashes),
+            "uncommitted_files": uncommitted,
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
 
 
@@ -82,6 +110,10 @@ def main() -> None:
                "-o", "ServerAliveCountMax=3"]
     target = f"root@{host}"
     result = build_release(ROOT)
+    if result["uncommitted_files"]:
+        print(f"WARNING: {len(result['uncommitted_files'])} file(s) differ from the committed "
+              "revision; the release is not reproducible from git until they are committed.",
+              flush=True)
     print(f"Uploading {result['release']} ({result['file_count']} files)", flush=True)
     subprocess.run(["ssh.exe", *options, target, "install -d -m 0700 /opt/rafuk/incoming"],
                    check=True)

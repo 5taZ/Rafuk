@@ -190,6 +190,10 @@ class KufarClient:
                 await asyncio.sleep(delay - elapsed)
             self._last_request_time = loop.time()
 
+    @property
+    def circuit_open(self) -> bool:
+        return self._circuit_state == "open"
+
     def _open_remaining(self) -> float | None:
         if self._circuit_state != "open":
             return None

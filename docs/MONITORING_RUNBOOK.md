@@ -4,6 +4,25 @@ This runbook documents what to monitor with the health and metrics surfaces that
 already exist. The monitoring provider is still an owner choice; this file is the
 provider-agnostic checklist for `REST-OPS-02`.
 
+## Built-in Telegram alerts
+
+Until an external provider is chosen, the scheduler (`scheduler/ops_watchdog.py`,
+every 5 minutes) messages every `ADMIN_TELEGRAM_USER_IDS` user, at most once per
+alert per 6 hours, when:
+
+| Alert | Condition |
+|-------|-----------|
+| Tracker tick | No tracker check finished in this scheduler for 15 minutes (failing, hung, or run by another scheduler process) |
+| Notification backlog | 200+ rows in `telegram_notification_dlq` |
+| Kufar down | The Kufar circuit breaker was open on 3 checks in a row (outage or the server IP is blocked) |
+| Redis evictions | `evicted_keys` grew since the previous check — AI quotas, bans and erasure markers live in the same LRU Redis |
+| Redis memory | `used_memory` at 90% of `maxmemory` |
+| Redis down | The scheduler cannot run `INFO` |
+
+Every alert is also logged at ERROR. It does not cover the API process, whose
+Docker healthcheck restarts it, nor host loss: that still needs an external probe
+of the public checks below.
+
 ## Public checks
 
 Monitor these through the same public route real users use:

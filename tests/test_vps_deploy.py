@@ -51,3 +51,28 @@ def test_release_refuses_private_files_even_if_accidentally_tracked(
     subprocess.run(["git", "add", "--", name], cwd=tmp_path, check=True)
     with pytest.raises(ValueError, match="Refusing to package"):
         build_release(tmp_path)
+
+
+def test_release_refuses_untracked_runtime_modules(tmp_path: Path) -> None:
+    # PRJ-REVIEW-2: only tracked files ship, so a module nobody added to git
+    # used to be left out silently and crash the release on import.
+    _repository(tmp_path)
+    (tmp_path / "scheduler").mkdir()
+    (tmp_path / "scheduler/job_lock.py").write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="scheduler/job_lock.py"):
+        build_release(tmp_path)
+    subprocess.run(["git", "add", "scheduler/job_lock.py"], cwd=tmp_path, check=True)
+    assert build_release(tmp_path)["file_count"] >= 2
+
+
+def test_manifest_records_files_that_differ_from_the_revision(tmp_path: Path) -> None:
+    _repository(tmp_path)
+    clean = build_release(tmp_path)
+    assert clean["uncommitted_files"] == []
+    (tmp_path / "api/main.py").write_text("edited\n", encoding="utf-8")
+    dirty = build_release(tmp_path)
+    assert dirty["uncommitted_files"] == ["api/main.py"]
+    with tarfile.open(dirty["archive"]) as archive:
+        manifest = json.load(archive.extractfile("DEPLOYMENT.json"))
+    assert manifest["git_dirty"] is True
+    assert manifest["uncommitted_files"] == ["api/main.py"]

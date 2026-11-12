@@ -27,6 +27,12 @@ restarts the deployed version without uploading files. Agents must run
 `host deploy` after each completed, tested application change, as required
 by `AGENTS.md`; no additional permission is needed for that routine step.
 
+`host deploy` refuses to start while a new file under `api/`, `bot/`,
+`scheduler/`, `migrations/`, `frontend/`, `assets/` or `nginx/` is not added to
+git: the release packs tracked files only, so it would ship without that file.
+Uncommitted edits still ship, with a warning; `DEPLOYMENT.json` lists them
+under `uncommitted_files` next to `git_revision`.
+
 Before deploying runtime or test changes, run the full test suite and Ruff.
 After frontend edits, bump static versions and rebuild the JS/CSS bundles
 as applicable. Deployment packages tracked working files plus the VPS
