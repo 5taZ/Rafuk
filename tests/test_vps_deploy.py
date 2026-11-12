@@ -53,16 +53,28 @@ def test_release_refuses_private_files_even_if_accidentally_tracked(
         build_release(tmp_path)
 
 
-def test_release_refuses_untracked_runtime_modules(tmp_path: Path) -> None:
-    # PRJ-REVIEW-2: only tracked files ship, so a module nobody added to git
-    # used to be left out silently and crash the release on import.
+def test_release_ships_untracked_runtime_modules_without_git_add(tmp_path: Path) -> None:
+    # PRJ-REVIEW-2: a module nobody added to git used to be left out silently
+    # and crash the release on import. It ships now, without requiring a
+    # write to .git (sandboxed agents cannot run git add).
     _repository(tmp_path)
-    (tmp_path / "scheduler").mkdir()
-    (tmp_path / "scheduler/job_lock.py").write_text("x = 1\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="scheduler/job_lock.py"):
+    (tmp_path / "migrations/versions").mkdir(parents=True)
+    (tmp_path / "migrations/versions/0037_new.py").write_bytes(b"x = 1\n")
+    (tmp_path / "notes.txt").write_text("scratch\n", encoding="utf-8")
+    result = build_release(tmp_path)
+    assert result["uncommitted_files"] == ["migrations/versions/0037_new.py"]
+    with tarfile.open(result["archive"]) as archive:
+        assert archive.extractfile("migrations/versions/0037_new.py").read() == b"x = 1\n"
+        assert "notes.txt" not in archive.getnames()
+        manifest = json.load(archive.extractfile("DEPLOYMENT.json"))
+    assert manifest["untracked_files"] == ["migrations/versions/0037_new.py"]
+
+
+def test_untracked_private_runtime_files_are_still_refused(tmp_path: Path) -> None:
+    _repository(tmp_path)
+    (tmp_path / "api/dump.sqlite").write_text("private", encoding="utf-8")
+    with pytest.raises(ValueError, match="Refusing to package"):
         build_release(tmp_path)
-    subprocess.run(["git", "add", "scheduler/job_lock.py"], cwd=tmp_path, check=True)
-    assert build_release(tmp_path)["file_count"] >= 2
 
 
 def test_manifest_records_files_that_differ_from_the_revision(tmp_path: Path) -> None:

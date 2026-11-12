@@ -22,9 +22,11 @@ def _git_names(root: Path, *args: str) -> list[str]:
 
 
 def untracked_runtime_files(root: Path) -> list[str]:
-    """PRJ-REVIEW-2: the release packs tracked files only, so a new module
-    nobody ran ``git add`` on was silently left out and the release crashed
-    on import (or rolled back) on the server."""
+    """PRJ-REVIEW-2: the release used to pack tracked files only, so a new
+    module nobody ran ``git add`` on was silently left out and the release
+    crashed on import (or rolled back) on the server. They are packed now.
+    Refusing to deploy instead blocked agents whose sandbox cannot write
+    ``.git`` (Codex), which then committed from ad-hoc repository copies."""
     return [name for name in _git_names(root, "ls-files", "--others", "--exclude-standard")
             if name.startswith(RUNTIME_DIRS)]
 
@@ -43,7 +45,7 @@ def release_files(root: Path) -> list[Path]:
                if path.is_file() and path.suffix in extensions]
     extras += ["scripts/vps/rafuk-vps"]
     files = []
-    for name in sorted(set(filter(None, tracked + extras))):
+    for name in sorted(set(filter(None, tracked + extras + untracked_runtime_files(root)))):
         path = root / name
         if not path.exists():
             continue
@@ -59,12 +61,8 @@ def release_files(root: Path) -> list[Path]:
 
 def build_release(root: Path) -> dict:
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root).decode().strip()
-    if untracked := untracked_runtime_files(root):
-        raise ValueError(
-            "Untracked runtime files would be left out of the release; git add them first: "
-            + ", ".join(untracked)
-        )
-    uncommitted = uncommitted_files(root)
+    untracked = untracked_runtime_files(root)
+    uncommitted = sorted(set(uncommitted_files(root) + untracked))
     contents = {}
     for path in release_files(root):
         data = path.read_bytes()
@@ -77,6 +75,7 @@ def build_release(root: Path) -> dict:
     release = f"{now:%Y%m%d-%H%M%S}-{revision[:7]}-{digest[:8]}"
     manifest = {"release": release, "git_revision": revision,
                 "git_dirty": bool(uncommitted), "uncommitted_files": uncommitted,
+                "untracked_files": untracked,
                 "created_at": now.isoformat(), "files": hashes}
     contents["DEPLOYMENT.json"] = json.dumps(manifest, indent=2).encode()
     contents["REVISION"] = (release + "\n").encode()
