@@ -755,13 +755,13 @@ def _seed_pd_consent_history(
                     session.add(UserConsent(
                         user_id=user.id,
                         consent_type="pd_processing",
-                        version="2026.2",
+                        version="2026.3",
                         granted_at=now - timedelta(days=days_ago + 2),
                         revoked_at=now - timedelta(days=days_ago + 1),
                     ))
                 if active:
                     session.add(UserConsent(
-                        user_id=user.id, consent_type="pd_processing", version="2026.2",
+                        user_id=user.id, consent_type="pd_processing", version="2026.3",
                     ))
                 tracker_id = None
                 if pause_reason is not _NO_TRACKER:

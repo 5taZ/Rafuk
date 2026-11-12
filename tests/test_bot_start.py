@@ -234,6 +234,18 @@ async def test_help_answers_with_the_start_greeting(dispatcher) -> None:
     reply = bot.await_args.args[0]
     assert reply.text.startswith("Rafuk — цены, объявления и автопоиск на Kufar.")
     assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
+    # LEGAL-01: the agreement and the policy are public before the first use.
+    assert "/legal/terms.html" in reply.text
+    assert "/legal/privacy.html" in reply.text
+
+
+def test_legal_links_point_at_the_mini_app_host() -> None:
+    from bot.handlers.start import legal_links
+
+    links = legal_links("https://app.example.by/index.html?x=1")
+    assert "https://app.example.by/legal/terms.html" in links
+    assert "https://app.example.by/legal/privacy.html" in links
+    assert legal_links("http://localhost:8081") == ""
 
 
 @pytest.mark.asyncio

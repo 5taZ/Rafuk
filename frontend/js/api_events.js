@@ -231,14 +231,15 @@ function createApiEvents(context) {
         });
 
         // ── Refinement chips (summary strip) ─────────────────────────
-        elements.summaryRefinements?.addEventListener("click", (event) => {
+        elements.categoryPicker?.addEventListener("click", (event) => {
             const category = event.target.closest("[data-summary-category]");
-            if (category) {
-                state.filters.category = Number(category.dataset.summaryCategory);
-                state.filters.pendingCategory = state.filters.category;
-                void search(state.ui.activeView, { keepFilters: true, query: state.search.activeQuery });
-                return;
-            }
+            if (!category) return;
+            _haptic("light");
+            state.filters.category = Number(category.dataset.summaryCategory);
+            state.filters.pendingCategory = state.filters.category;
+            void search(state.ui.activeView, { keepFilters: true, query: state.search.activeQuery });
+        });
+        elements.summaryRefinements?.addEventListener("click", (event) => {
             const chip = event.target.closest("[data-refinement]");
             if (!chip) return;
             const token = chip.dataset.refinement || "";

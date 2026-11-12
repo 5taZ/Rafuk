@@ -37,6 +37,7 @@ from api.routers import (
     geography,
     health,
     image_proxy,
+    legal,
     listing_detail,
     listings,
     price_history,
@@ -583,6 +584,7 @@ def create_app() -> FastAPI:
     app.include_router(image_proxy.router, prefix="/api/v1")
     app.include_router(analytics.router, prefix="/api/v1")
     app.include_router(consent.router, prefix="/api/v1")
+    app.include_router(legal.router, prefix="/api/v1")
     return app
 
 

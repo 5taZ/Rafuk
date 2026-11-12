@@ -248,6 +248,14 @@ class Settings(BaseSettings):
     # Rafuk opens only to subscribers of this channel (bot /start and the
     # Mini App API); empty turns the gate off. The bot must be its admin.
     required_channel: str = "@RafuksToResell"
+    # LEGAL-01: Law 99-З requires the operator's name and address before
+    # consent; the public terms/privacy pages read them from here.
+    operator_name: str = ""
+    operator_address: str = ""
+    operator_email: str = ""
+    # LEGAL-05: free accounts with no active trackers that have not opened
+    # the Mini App for this long are erased; 0 keeps them indefinitely.
+    inactive_account_retention_days: int = Field(default=730, ge=0)
 
     # Image proxy (WebP/AVIF transcode of Kufar JPEGs).
     image_proxy_enabled: bool = True

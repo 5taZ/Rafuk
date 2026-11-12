@@ -165,11 +165,24 @@ function analyticsApp() {
 
         core.state.search.draft = core.elements.searchInput.value.trim();
         renderers.renderAll();
-        void actions.loadProfile({ silent: true });
-        void actions.loadTrackers();
-        void actions.loadLeads();
-        void actions.loadWatchlist();
-        void actions.applyLaunchParams();
+        const startLoading = () => {
+            void actions.loadProfile({ silent: true });
+            void actions.loadTrackers();
+            void actions.loadLeads();
+            void actions.loadWatchlist();
+            void actions.applyLaunchParams();
+        };
+        // LEGAL-02: nothing is loaded for a user who has not accepted the
+        // user agreement. A device that already accepted it loads at once
+        // and re-checks in the background (a new version re-opens the gate).
+        if (typeof actions.ensureTermsAccepted !== "function") {
+            startLoading();
+        } else if (actions.termsAcceptedLocally?.()) {
+            startLoading();
+            void actions.ensureTermsAccepted();
+        } else {
+            void actions.ensureTermsAccepted().finally(startLoading);
+        }
 
         // Pull-to-refresh — page-scoped, picks the right loader by view.
         // Skipped under prefers-reduced-motion (the helper short-circuits).

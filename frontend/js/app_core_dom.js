@@ -28,6 +28,8 @@ function cacheAppElements(elements) {
     elements.summaryFair = document.getElementById("summary-fair");
     elements.summaryRefinements = document.getElementById("summary-refinements");
     elements.summaryRefinementsChips = document.getElementById("summary-refinements-chips");
+    elements.categoryPicker = document.getElementById("category-picker");
+    elements.categoryPickerOptions = document.getElementById("category-picker-options");
     elements.viewNav = document.querySelector(".view-nav");
     elements.profileChip = document.getElementById("profile-chip");
     elements.profileChipLabel = document.getElementById("profile-chip-label");

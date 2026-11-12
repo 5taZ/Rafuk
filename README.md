@@ -198,6 +198,16 @@ The consent and erasure flow is built around Belarus law **№99-З**
 (personal data protection). See `api/routers/consent.py` and the
 `UserConsent` / `ai_audit_log` tables.
 
+* The user agreement and the processing policy are public static pages,
+  `frontend/legal/terms.html` and `frontend/legal/privacy.html`; the Mini
+  App shows the same documents. Operator details come from
+  `OPERATOR_NAME`, `OPERATOR_ADDRESS` and `OPERATOR_EMAIL` via the public
+  `GET /api/v1/legal/operator` — set them in production.
+* The Mini App asks for the agreement (`terms` record) before loading any
+  data; AI and cross-border transfer keep their own consents.
+* Free accounts without active trackers are erased after
+  `INACTIVE_ACCOUNT_RETENTION_DAYS` (default 730) without opening the app.
+
 ## License
 
 Private — not yet open-sourced.

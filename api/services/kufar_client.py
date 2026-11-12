@@ -17,6 +17,10 @@ from api.services.kufar_filters import KUFAR_CONDITION_VALUES, KUFAR_SELLER_VALU
 logger = logging.getLogger(__name__)
 
 KUFAR_BASE_URL = "https://api.kufar.by/search-api/v2/search/rendered-paginated"
+# LEGAL-04: "RafukBot/1.0" was tried on 2026-11-11 and the VPS IP was cut off
+# by Kufar within minutes (TCP connects to every api.kufar.by address timed
+# out, from the host too). Keep this proven value until a replacement is
+# agreed with Kufar or tested without risking the production IP.
 USER_AGENT = "Mozilla/5.0 (compatible; KufarAnalytics/1.0; +https://kufar.by)"
 MAX_RETRIES = 3
 # RV2-BK-01: the cursor parser used to read the ``self`` entry (always a

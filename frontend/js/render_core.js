@@ -656,6 +656,7 @@ function createRenderCore(context) {
     /* ===== Summary ===== */
 
     const MAX_REFINEMENT_CHIPS = 4;
+    const MAX_PICKER_CATEGORIES = 4;
 
     function normaliseRefinementText(value) {
         return String(value ?? "")
@@ -692,17 +693,6 @@ function createRenderCore(context) {
             : [];
         const visibleRefinements = visibleRefinementTokens(refinements, state.search.activeQuery);
         domClear(elements.summaryRefinementsChips);
-        const categories = state.misc.stats.categories || [];
-        if (state.filters.category == null && categories.length > 1) {
-            for (const category of categories.slice(0, 3)) {
-                elements.summaryRefinementsChips.appendChild(domEl("button", {
-                    type: "button",
-                    className: "summary-refinement-chip",
-                    attrs: { "data-summary-category": String(category.id) },
-                    text: category.label,
-                }));
-            }
-        }
         for (const token of visibleRefinements) {
             const chip = document.createElement("button");
             chip.type = "button";
@@ -713,6 +703,57 @@ function createRenderCore(context) {
             elements.summaryRefinementsChips.appendChild(chip);
         }
         elements.summaryRefinements.hidden = !elements.summaryRefinementsChips.hasChildNodes();
+    }
+
+    function listingCountLabel(count) {
+        const n = Math.abs(count) % 100;
+        const word = n % 10 === 1 && n !== 11 ? "объявление"
+            : n % 10 >= 2 && n % 10 <= 4 && (n < 12 || n > 14) ? "объявления" : "объявлений";
+        return `${count.toLocaleString("ru-RU")} ${word}`;
+    }
+
+    // Kufar counts every ad that mentions the words anywhere (other models,
+    // Pro Max, cases), and we read only its newest page; say both instead of
+    // letting "981 on Kufar, 101 here" look like lost listings.
+    function sampleSummary(stats, totalResults, analyzedCount) {
+        const kufarTotal = Number(stats.kufar_total || 0);
+        const scanned = Number(stats.scanned_count || 0);
+        const exact = stats.strict_search !== false && !stats.fallback_used;
+        if (!exact || kufarTotal <= totalResults || scanned <= 0) {
+            return { text: `Найдено ${listingCountLabel(totalResults)}, цена посчитана по ${analyzedCount}.`, note: "" };
+        }
+        const partial = scanned < kufarTotal;
+        return {
+            text: `На Kufar ${listingCountLabel(kufarTotal)} по словам запроса. `
+                + (partial ? `Среди ${scanned} самых свежих точных совпадений` : "Точных совпадений")
+                + ` — ${totalResults}, цена посчитана по ${analyzedCount}.`,
+            note: "Kufar находит слова запроса в любом месте объявления и во всех категориях, поэтому в его число "
+                + "попадают другие модели, старшие версии и аксессуары. Мы оставляем только объявления, "
+                + "в названии которых есть все слова запроса"
+                + (partial ? `, и смотрим ${scanned} самых свежих объявлений Kufar. ` : ". "),
+        };
+    }
+
+    // A mixed-category query has no meaningful price, so the choice sits
+    // right under the search box instead of as a chip inside the summary.
+    function renderCategoryPicker(categories) {
+        if (!elements.categoryPicker || !elements.categoryPickerOptions) return;
+        const show = categories.length > 1;
+        if (show) {
+            domClear(elements.categoryPickerOptions);
+            for (const category of categories.slice(0, MAX_PICKER_CATEGORIES)) {
+                const count = Number(category.count) || 0;
+                elements.categoryPickerOptions.appendChild(domEl("button", {
+                    type: "button",
+                    className: "category-option",
+                    attrs: { "data-summary-category": String(category.id) },
+                }, [
+                    domEl("span", { className: "category-option-label", text: category.label }),
+                    count > 0 ? domEl("span", { className: "category-option-count", text: listingCountLabel(count) }) : null,
+                ].filter(Boolean)));
+            }
+        }
+        setVisibilityAnimated(elements.categoryPicker, show);
     }
 
     function renderSummary() {
@@ -727,9 +768,11 @@ function createRenderCore(context) {
                 if (elements.summaryRefinements) {
                     elements.summaryRefinements.hidden = true;
                     domClear(elements.summaryRefinementsChips);                }
+                renderCategoryPicker([]);
                 return;
             }
             renderRefinementChips();
+            renderCategoryPicker(state.filters.category == null ? state.misc.stats.categories || [] : []);
 
             const totalResults = Number(state.misc.stats.total_results || 0);
             const analyzedCount = Number(state.misc.stats.analyzed_count || state.misc.stats.count || 0);
@@ -769,12 +812,12 @@ function createRenderCore(context) {
             const scope = market.length ? `${market.join(" · ")}. ` : "";
             const mixed = state.filters.category == null && (state.misc.stats.categories?.length || 0) > 1;
             const scopeNote = "Расчёт по выбранной категории, городу, состоянию и продавцу. Фильтры цены и скидки ограничивают только список объявлений.";
+            const sample = sampleSummary(state.misc.stats, totalResults, analyzedCount);
             elements.summarySignal.textContent = totalResults === 0 && analyzedCount === 0 ? signal
-                : `${scope}` + (mixed ? "Несколько категорий: выберите одну ниже, чтобы получить оценку цены."
-                    : `В расчёте ${analyzedCount} из ${totalResults} объявлений с ценой.`);
+                : `${scope}` + (mixed ? "Цена появится, когда вы выберете категорию в блоке под поиском." : sample.text);
             if (elements.summaryMethod) elements.summaryMethod.hidden = analyzedCount === 0;
             if (elements.summaryMethodNote) elements.summaryMethodNote.textContent =
-                `Крайние выбросы исключены. ${scopeNote} ${signal}`;
+                `${sample.note}Крайние выбросы исключены. ${scopeNote} ${signal}`;
             elements.summaryStrip.classList.toggle("summary-strip--mixed", mixed);
             elements.summaryMedian.textContent = !mixed && Number.isFinite(marketMedian) && marketMedian > 0
                 ? formatPrice(marketMedian)

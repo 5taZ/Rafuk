@@ -288,7 +288,9 @@ async def test_search_sends_correct_user_agent(
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=ok_response) as mock:
         await KufarClient(mock_settings).search(query="test")
     ua = mock.call_args.kwargs.get("headers", {}).get("User-Agent", "")
-    assert "KufarAnalytics" in ua
+    # LEGAL-04: the proven value; "RafukBot" got the VPS IP cut off by Kufar.
+    assert ua == "Mozilla/5.0 (compatible; KufarAnalytics/1.0; +https://kufar.by)"
+    assert "bot" not in ua.lower()
 
 
 @pytest.mark.asyncio

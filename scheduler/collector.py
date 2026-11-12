@@ -62,6 +62,8 @@ from api.models import (
     UserConsent,
 )
 from api.schemas import WatchlistComparison
+from api.services.account_erasure import purge_user_data
+from api.services.account_status import BARE_SEARCH_STATUS_CODE, is_admin_user
 from api.services.aggregator import (
     PriceStats,
     apply_search_mode,
@@ -2035,6 +2037,9 @@ async def run_cleanup(session_factory: async_sessionmaker[AsyncSession]) -> None
             # function.
             await cleanup_ai_audit_log(session, days=365)
             await cleanup_telegram_notification_dlq(session, days=30)
+            await cleanup_inactive_accounts(
+                session, days=settings.inactive_account_retention_days, settings=settings,
+            )
             await session.commit()
             logger.info("Daily cleanup completed successfully")
         except (OperationalError, SQLAlchemyError):
@@ -2175,6 +2180,45 @@ async def cleanup_ai_audit_log(session: AsyncSession, days: int = 365) -> int:
             days,
         )
     return deleted_count
+
+
+_INACTIVE_ACCOUNT_BATCH = 200
+
+
+async def cleanup_inactive_accounts(
+    session: AsyncSession, *, days: int, settings: Settings,
+) -> int:
+    """LEGAL-05: erase free accounts nobody has used for ``days``.
+
+    Law 99-З keeps personal data no longer than its purpose needs, and an
+    account that has not opened the Mini App for that long has none. An
+    active tracker is use without opening the app, a paid or granted
+    status is a live arrangement, and admins stay. Erasure is the same
+    per-table purge as "delete my account"; per-user Redis keys expire by
+    their own TTL. ``days <= 0`` keeps everyone.
+    """
+    if days <= 0:
+        return 0
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    rows = (await session.execute(
+        select(User.id, User.telegram_user_id)
+        .where(
+            func.coalesce(User.last_seen_at, User.created_at) < cutoff,
+            User.account_status_code == BARE_SEARCH_STATUS_CODE,
+            ~exists().where(Tracker.user_id == User.id, Tracker.active.is_(True)),
+        )
+        .order_by(User.id)
+        .limit(_INACTIVE_ACCOUNT_BATCH)
+    )).all()
+    erased = 0
+    for user_id, telegram_user_id in rows:
+        if is_admin_user(telegram_user_id, settings):
+            continue
+        await purge_user_data(session, telegram_user_id=telegram_user_id, user_id=user_id)
+        erased += 1
+    if erased:
+        logger.info("Erased %d account(s) inactive for over %d days", erased, days)
+    return erased
 
 
 async def cleanup_telegram_notification_dlq(session: AsyncSession, days: int = 30) -> int:

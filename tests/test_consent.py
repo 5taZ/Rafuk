@@ -79,7 +79,7 @@ async def test_ai_consent_info_matches_default_provider(client):
     assert data["provider_region"] == "США"
     assert data["provider_host"] == "generativelanguage.googleapis.com"
     assert data["model"] == "gemini-2.5-flash"
-    assert data["policy_version"] == "2026.2"
+    assert data["policy_version"] == "2026.3"
     assert data["display_label"] == "Google Gemini API, модель gemini-2.5-flash (США)"
 
 
@@ -109,6 +109,55 @@ async def test_ai_consent_info_uses_provider_overrides(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_terms_acceptance_is_recorded_and_cannot_be_revoked(client):
+    # LEGAL-02: the agreement is accepted like a consent but ends only
+    # with the account.
+    resp = await client.get("/api/v1/account/consent/terms")
+    assert resp.status_code == 200
+    assert resp.json()["granted"] is False
+    resp = await client.post(
+        "/api/v1/account/consent", json={"consent_type": "terms", "version": "2026.3"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["granted"] is True
+    resp = await client.get("/api/v1/account/consent/terms")
+    assert resp.json()["granted"] is True
+    resp = await client.delete("/api/v1/account/consent/terms")
+    assert resp.status_code == 400
+    assert "удалите аккаунт" in resp.json()["detail"]
+    assert (await client.get("/api/v1/account/consent/terms")).json()["granted"] is True
+
+
+@pytest.mark.asyncio
+async def test_legal_operator_info_is_public(monkeypatch):
+    # LEGAL-01: the public terms/privacy pages read it without Telegram auth.
+    from api.config import get_settings
+    from api.routers import legal as legal_router
+
+    monkeypatch.setenv("OPERATOR_NAME", "ИП Тестов Тест Тестович")
+    monkeypatch.setenv("OPERATOR_ADDRESS", "г. Минск, ул. Тестовая, 1")
+    monkeypatch.setenv("OPERATOR_EMAIL", "privacy@example.com")
+    monkeypatch.setenv("INACTIVE_ACCOUNT_RETENTION_DAYS", "365")
+    get_settings.cache_clear()
+    legal_router.get_settings.cache_clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get("/api/v1/legal/operator")
+    finally:
+        get_settings.cache_clear()
+        legal_router.get_settings.cache_clear()
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "policy_version": "2026.3",
+        "operator_name": "ИП Тестов Тест Тестович",
+        "operator_address": "г. Минск, ул. Тестовая, 1",
+        "operator_email": "privacy@example.com",
+        "inactive_account_retention_days": 365,
+        "ai_provider": "Google Gemini API, модель gemini-2.5-flash (США)",
+    }
+
+
+@pytest.mark.asyncio
 async def test_consent_status_rejects_invalid_type(client):
     resp = await client.get("/api/v1/account/consent/invalid_type")
     assert resp.status_code == 400
@@ -121,25 +170,25 @@ async def test_consent_status_rejects_invalid_type(client):
 async def test_grant_consent(client):
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
     assert resp.status_code == 201
     data = resp.json()
     assert data["granted"] is True
     assert data["consent_type"] == "ai_analysis"
-    assert data["version"] == "2026.2"
+    assert data["version"] == "2026.3"
 
 
 @pytest.mark.asyncio
 async def test_grant_consent_idempotent(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     # Second grant with same version should return 201 (not error)
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     assert resp.status_code == 201
     assert resp.json()["granted"] is True
@@ -149,7 +198,7 @@ async def test_grant_consent_idempotent(client):
 async def test_grant_consent_rejects_invalid_type(client):
     resp = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "bogus", "version": "2026.2"},
+        json={"consent_type": "bogus", "version": "2026.3"},
     )
     # A-6: Pydantic Literal now catches invalid types at schema level (422)
     assert resp.status_code == 422
@@ -162,13 +211,13 @@ async def test_grant_consent_rejects_invalid_type(client):
 async def test_consent_status_shows_granted_after_grant(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "cross_border", "version": "2026.2"},
+        json={"consent_type": "cross_border", "version": "2026.3"},
     )
     resp = await client.get("/api/v1/account/consent/cross_border")
     assert resp.status_code == 200
     data = resp.json()
     assert data["granted"] is True
-    assert data["version"] == "2026.2"
+    assert data["version"] == "2026.3"
     assert data["granted_at"] is not None
 
 
@@ -179,7 +228,7 @@ async def test_consent_status_shows_granted_after_grant(client):
 async def test_revoke_consent(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
     resp = await client.delete("/api/v1/account/consent/ai_analysis")
     assert resp.status_code == 204
@@ -243,7 +292,7 @@ async def test_revoke_consent_clears_per_user_cache(client, monkeypatch):
 
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
     resp = await client.delete("/api/v1/account/consent/ai_analysis")
     assert resp.status_code == 204
@@ -265,7 +314,7 @@ async def test_export_account_data_with_tracker_numeric_fields(client):
     their data export (the Mini App always sends min_discount_percent)."""
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
     from sqlalchemy import select
 
@@ -298,14 +347,13 @@ async def test_export_account_data(client):
     # Grant consent — this also creates the user via ensure_user
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
     from sqlalchemy import select
 
     from api.main import app
     from api.models import (
         AIAuditLog,
-        Contact,
         LeadItem,
         LeadItemPriceSnapshot,
         LeadReminder,
@@ -365,12 +413,6 @@ async def test_export_account_data(client):
                 message="failed notification",
                 error_kind="retryable",
             ),
-            Contact(
-                user_id=user.id,
-                phone="+375291234567",
-                seller_name="Seller",
-                kufar_profile="https://www.kufar.by/user/test",
-            ),
         ])
         await session.commit()
 
@@ -386,7 +428,6 @@ async def test_export_account_data(client):
         "reminders",
         "ai_audit_logs",
         "notification_dlq",
-        "contacts",
     ):
         assert key in data
         assert data[key], f"{key} should be exported"
@@ -408,7 +449,8 @@ async def test_export_account_data(client):
     assert "@seller" not in data["ai_audit_logs"][0]["result_summary"]
     assert data["ai_audit_logs"][0]["model"] == "test-model"
     assert data["notification_dlq"][0]["message"] == "failed notification"
-    assert data["contacts"][0]["phone"] == "+375291234567"
+    # LEGAL-07: the unused sellers' contacts table is gone.
+    assert "contacts" not in data
 
 
 # ── Account deletion ───────────────────────────────────────────────────
@@ -419,7 +461,7 @@ async def test_delete_account(client):
     # Create consent first
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     # BE-M3: confirmation must match the user's Telegram first_name
     # (case-insensitive). _fake_telegram_user returns "ConsentTest".
@@ -435,7 +477,7 @@ async def test_delete_account(client):
 async def test_delete_account_removes_orphan_notification_dlq_rows(client):
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     from sqlalchemy import select
 
@@ -515,7 +557,7 @@ async def test_delete_account_accepts_telegram_id_as_confirmation(client):
     blank) can still confirm by typing their numeric Telegram id."""
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     resp = await client.request(
         "DELETE",
@@ -744,7 +786,7 @@ async def test_revoke_pd_processing_pauses_trackers(client):
     # Grant + create the user row, then add an active tracker.
     grant = await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
     assert grant.status_code in (200, 201, 204)
 
@@ -778,7 +820,7 @@ async def test_revoke_ai_analysis_does_not_pause_trackers(client):
 
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "ai_analysis", "version": "2026.2"},
+        json={"consent_type": "ai_analysis", "version": "2026.3"},
     )
 
     sf = app.state.session_factory
@@ -808,7 +850,7 @@ async def test_revoke_pd_processing_keeps_already_paused_trackers_paused(client)
 
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
 
     sf = app.state.session_factory
@@ -844,7 +886,7 @@ async def test_revoke_pd_processing_takes_over_bot_blocked_pause(client):
 
     await client.post(
         "/api/v1/account/consent",
-        json={"consent_type": "pd_processing", "version": "2026.2"},
+        json={"consent_type": "pd_processing", "version": "2026.3"},
     )
 
     sf = app.state.session_factory
@@ -974,7 +1016,7 @@ async def test_delete_account_is_not_undone_by_the_same_init_data(erasure_app):
             ("GET", "/api/v1/profile/me", None),
             ("POST", "/api/v1/trackers", {"query": "iphone 15"}),
             ("POST", "/api/v1/account/consent",
-             {"consent_type": "pd_processing", "version": "2026.2"}),
+             {"consent_type": "pd_processing", "version": "2026.3"}),
         ):
             resp = await client.request(method, path, json=body, headers=stale)
             assert resp.status_code == 410, path
@@ -1216,7 +1258,6 @@ async def test_failed_erasure_drops_the_tombstone(erasure_app, monkeypatch):
 async def _seed_account_graph(session, *, telegram_user_id: int, first_name: str):
     from api.models import (
         AIAuditLog,
-        Contact,
         DealExpense,
         LeadItem,
         LeadItemPriceSnapshot,
@@ -1256,9 +1297,8 @@ async def _seed_account_graph(session, *, telegram_user_id: int, first_name: str
         LeadItemPriceSnapshot(lead_item_id=lead.id, price_byn=900),
         DealExpense(lead_id=lead.id, user_id=user.id, expense_type="delivery", amount_byn=10),
         LeadReminder(lead_id=lead.id, user_id=user.id, remind_at=datetime.now(UTC)),
-        UserConsent(user_id=user.id, consent_type="pd_processing", version="2026.2"),
+        UserConsent(user_id=user.id, consent_type="pd_processing", version="2026.3"),
         AIAuditLog(user_id=user.id, endpoint="analyze", query="iphone", model="test-model"),
-        Contact(user_id=user.id, phone=f"+375{telegram_user_id}"),
         SavedSearch(user_id=user.id, name="Phones", query="iphone"),
         TelegramNotificationDLQ(
             user_id=user.id,
@@ -1277,7 +1317,6 @@ async def _owned_row_counts(session, user_id: int) -> dict[str, int]:
 
     from api.models import (
         AIAuditLog,
-        Contact,
         DealExpense,
         LeadItem,
         LeadItemPriceSnapshot,
@@ -1293,7 +1332,7 @@ async def _owned_row_counts(session, user_id: int) -> dict[str, int]:
     counts = {}
     for model in (
         Tracker, TrackerEvent, LeadItem, DealExpense, LeadReminder, UserConsent,
-        AIAuditLog, Contact, SavedSearch, TelegramNotificationDLQ,
+        AIAuditLog, SavedSearch, TelegramNotificationDLQ,
     ):
         counts[model.__tablename__] = await session.scalar(
             select(func.count()).select_from(model).where(model.user_id == user_id)
@@ -1382,7 +1421,7 @@ async def test_delete_account_bulk_deletes_the_whole_graph(client):
     owned = (
         "trackers", "tracker_events", "lead_items", "lead_item_price_snapshots",
         "deal_expenses", "lead_reminders", "user_consents", "ai_audit_log",
-        "contacts", "saved_searches", "telegram_notification_dlq",
+        "saved_searches", "telegram_notification_dlq",
     )
     # SC-03: the ai_analysis:* eviction now reads its (ad_id, query) index
     # before the purge — a bounded projection, not the ORM graph.

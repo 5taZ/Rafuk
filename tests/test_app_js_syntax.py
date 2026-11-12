@@ -4325,6 +4325,111 @@ globalThis.fetch = async (...args) => { fetchCalls += 1; return respond(...args)
     _node_ok(harness)
 
 
+def test_summary_explains_kufar_total_versus_strict_sample() -> None:
+    """kufar.by shows 981 for "iPhone 18 Pro" while we show 101: the summary
+    names Kufar's loose count, the newest-page sample and the exact matches."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+const assert = require("assert");
+const mk = (tag) => document.body.appendChild(document.createElement(tag));
+const stats = {
+    total_results: 101, analyzed_count: 85, median: 3990, kufar_total: 981, scanned_count: 200,
+    strict_search: true, fallback_used: false, categories: [{ id: 17010, label: "Телефоны" }],
+};
+const state = {
+    ui: { activeView: "overview" }, search: { activeQuery: "iPhone 18 Pro" },
+    filters: { category: null, categories: [] }, misc: { stats },
+};
+const elements = {
+    summaryStrip: mk("section"), summaryQuery: mk("strong"), summarySignal: mk("p"),
+    summaryMedian: mk("strong"), summaryRange: mk("strong"), summaryFair: mk("strong"),
+    summaryMethodNote: mk("p"),
+};
+const core = createRenderCore({
+    state, elements, formatPrice: String, formatPriceRange: (a, b) => `${a}-${b}`,
+    logClientError: (...a) => { throw a[1] || a[0]; },
+});
+core.renderSummary();
+assert.strictEqual(elements.summarySignal.textContent,
+    "На Kufar 981 объявление по словам запроса. "
+    + "Среди 200 самых свежих точных совпадений — 101, цена посчитана по 85.");
+assert.ok(elements.summaryMethodNote.textContent.includes("смотрим 200 самых свежих"));
+
+Object.assign(stats, { kufar_total: 150, scanned_count: 150 });
+core.renderSummary();
+assert.ok(elements.summarySignal.textContent.startsWith("На Kufar 150 объявлений"));
+assert.ok(elements.summarySignal.textContent.includes("Точных совпадений — 101"));
+
+Object.assign(stats, { fallback_used: true });
+core.renderSummary();
+assert.strictEqual(
+    elements.summarySignal.textContent, "Найдено 101 объявление, цена посчитана по 85.",
+);
+"""
+    _node_ok(harness)
+
+
+def test_mixed_categories_show_picker_under_search_and_pick_one() -> None:
+    """A query spanning several categories has no price yet: the choice is
+    a prominent picker under the search box, not a chip in the summary."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
+function _bindCarouselEvents() {}
+function _bindExpenseEvents() {}
+""" + _js("api_events.js") + r"""
+const assert = require("assert");
+window.matchMedia = () => ({ matches: true });
+const mk = (tag) => document.body.appendChild(document.createElement(tag));
+const state = {
+    ui: { activeView: "overview" },
+    search: { activeQuery: "macbook air m5", draft: "macbook air m5" },
+    filters: { category: null, pendingCategory: null, categories: [] },
+    misc: { stats: { total_results: 310, analyzed_count: 300, median: 3000, categories: [
+        { id: 16010, label: "Ноутбуки", count: 214 },
+        { id: 16040, label: "Периферия и аксессуары", count: 96 },
+    ] } },
+    trackers: { events: [] }, leads: { items: [] }, watchlist: { items: [] },
+    detail: { data: null }, admin: {},
+};
+const elements = {
+    summaryStrip: mk("section"), summaryQuery: mk("strong"), summarySignal: mk("p"),
+    summaryMedian: mk("strong"), summaryRange: mk("strong"), summaryFair: mk("strong"),
+    summaryRefinements: mk("div"), summaryRefinementsChips: mk("div"),
+    categoryPicker: mk("div"), categoryPickerOptions: mk("div"),
+    searchInput: mk("input"), viewTabs: [], sortButtons: [],
+};
+elements.categoryPicker.hidden = true;
+elements.categoryPicker.appendChild(elements.categoryPickerOptions);
+const chips = elements.summaryRefinementsChips;
+chips.hasChildNodes = function () { return this.children.length > 0; };
+const core = createRenderCore({
+    state, elements, formatPrice: String, formatPriceRange: (a, b) => `${a}-${b}`,
+    logClientError: (...a) => { throw a[1] || a[0]; },
+});
+core.renderSummary();
+assert.strictEqual(elements.categoryPicker.hidden, false);
+const options = elements.categoryPickerOptions.querySelectorAll("[data-summary-category]");
+assert.strictEqual(options.length, 2);
+assert.ok(options[0].textContent.includes("214 объявлений"));
+assert.strictEqual(chips.querySelectorAll("[data-summary-category]").length, 0);
+assert.strictEqual(elements.summaryMedian.textContent, "—");
+
+const searches = [];
+createApiEvents({
+    state, elements, renderAll() {}, renderLoading() {}, renderStrictSearch() {},
+    renderSortButtons() {}, startTrackerRefresh() {}, stopTrackerRefresh() {}, showToast() {},
+    search: (...args) => { searches.push(args); return Promise.resolve(); },
+    loadListings: () => Promise.resolve(),
+}).bindEvents();
+fire(options[1], "click");
+assert.strictEqual(state.filters.category, 16040);
+assert.strictEqual(state.filters.pendingCategory, 16040);
+assert.deepStrictEqual(searches[0], ["overview", { keepFilters: true, query: "macbook air m5" }]);
+
+core.renderSummary();
+assert.strictEqual(elements.categoryPicker.hidden, true, "a chosen category retires the picker");
+"""
+    _node_ok(harness)
+
+
 def test_rv_fe05_session_banner_is_single_and_closes_app() -> None:
     harness = _FAKE_DOM_JS + _js("dom_helpers.js", "render_core.js") + r"""
 const assert = require("assert");
@@ -4725,6 +4830,92 @@ const closeButton = document.getElementById("privacy-modal-close");
     assert.ok(!document.body.classList.contains("modal-open"), "closing the gate unlocks");
     assert.strictEqual(globalEscapes, 0, "the gate swallows its own Escape too");
     assert.ok(!main.hasAttribute("inert"));
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
+def test_legal02_terms_gate_blocks_until_the_agreement_is_accepted() -> None:
+    """LEGAL-02: a user without an accepted agreement meets a gate that
+    cannot be dismissed; accepting posts "terms" with the current policy
+    version and remembers it on the device."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + _ACTIONS_STUBS + r"""
+const posts = [];
+let granted = false;
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({}),
+        requestJson: noop,
+        getJson: async (url) => {
+            if (url.endsWith("/legal/operator")) return { policy_version: "2026.3" };
+            if (url.endsWith("/consent/terms")) {
+                return { granted, version: granted ? "2026.3" : null };
+            }
+            return {};
+        },
+        postJson: async (url, body) => { posts.push([url, body]); granted = true; return {}; },
+        deleteJson: noop,
+        buildCommonQuery: noop,
+    };
+}
+""" + _js("app_actions.js") + r"""
+const assert = require("assert");
+const app = el("div", { id: "app-root" });
+const main = el("main", {}, el("button", { id: "search" }, "Search"));
+const gate = el("div", { id: "terms-modal", class: "modal-overlay", hidden: true },
+    el("div", { class: "modal-content", role: "dialog" },
+        el("a", { id: "terms-open-terms", href: "/legal/terms.html" }, "Соглашение"),
+        el("a", { id: "terms-open-privacy", href: "/legal/privacy.html" }, "Политика"),
+        el("input", { id: "terms-checkbox", type: "checkbox" }),
+        el("button", { id: "terms-accept-btn" }, "Принимаю"),
+        el("button", { id: "terms-decline-btn" }, "Не принимаю")));
+app.append(main, gate);
+document.body.append(app);
+let globalEscapes = 0;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") globalEscapes += 1; });
+const actions = createAppActions({
+    state: { search: { recentSearches: [] }, misc: {}, ui: {}, profile: {} },
+    elements: { views: {} },
+    markDirty: noop,
+    renderAll: noop,
+    showToast: noop,
+    trapFocus,
+});
+const checkbox = document.getElementById("terms-checkbox");
+const accept = document.getElementById("terms-accept-btn");
+
+(async () => {
+    assert.strictEqual(actions.termsAcceptedLocally(), false);
+    let done = false;
+    const pending = actions.ensureTermsAccepted().then(() => { done = true; });
+    await tick(5);
+    assert.strictEqual(gate.hidden, false, "the gate opens");
+    assert.ok(main.hasAttribute("inert"));
+    assert.strictEqual(accept.disabled, true, "accept needs the checkbox");
+
+    keydown(checkbox, "Escape");
+    assert.strictEqual(gate.hidden, false, "Escape does not dismiss the gate");
+    assert.strictEqual(globalEscapes, 0);
+    accept.click();
+    await tick(5);
+    assert.strictEqual(posts.length, 0);
+    assert.strictEqual(done, false);
+
+    checkbox.checked = true;
+    fire(checkbox, "change");
+    assert.strictEqual(accept.disabled, false);
+    accept.click();
+    await pending;
+    assert.deepStrictEqual(posts, [
+        ["/api/v1/account/consent", { consent_type: "terms", version: "2026.3" }],
+    ]);
+    assert.strictEqual(gate.hidden, true);
+    assert.ok(!main.hasAttribute("inert"));
+    assert.strictEqual(actions.termsAcceptedLocally(), true);
+    assert.strictEqual(localStorage.getItem("rafuk:termsAcceptedVersion"), "2026.3");
+
+    await actions.ensureTermsAccepted();
+    assert.strictEqual(gate.hidden, true, "an accepted agreement opens no gate");
+    assert.strictEqual(posts.length, 1);
 })()""" + _NODE_FAIL
     _node_ok(harness)
 

@@ -725,8 +725,8 @@ class ConsentStatusResponse(BaseModel):
 
 class ConsentGrantRequest(BaseModel):
     # A-6: Literal validates at schema level; OpenAPI/422 reflects allowed values.
-    consent_type: Literal["ai_analysis", "pd_processing", "cross_border"]
-    version: str = "2026.2"
+    consent_type: Literal["ai_analysis", "pd_processing", "cross_border", "terms"]
+    version: str = "2026.3"
 
 
 class AIConsentInfoResponse(BaseModel):

@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261108_0034"
+EXPECTED_HEAD = "20261112_0036"
 
 
 def _alembic_config() -> Config:
@@ -127,6 +127,34 @@ def test_tracker_scaling_indexes_round_trip_without_touching_data(tmp_path: Path
     # contains columns introduced by later migrations.
     _run_alembic(path, ("upgrade", "20261108_0033"))
     assert names <= indexes()
+
+
+def test_contacts_drop_refuses_to_erase_rows(tmp_path: Path) -> None:
+    """LEGAL-07: the unused sellers' contacts table goes only when empty."""
+    from api.models import Base
+
+    path = tmp_path / "contacts.db"
+    engine = sa.create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+    def tables():
+        with sqlite3.connect(path) as con:
+            return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+    assert "contacts" not in tables()
+    _run_alembic(path, ("stamp", "20261112_0036"), ("downgrade", "-1"))
+    assert "contacts" in tables()
+    with sqlite3.connect(path) as con:
+        con.execute("INSERT INTO users (id, telegram_user_id, first_name) VALUES (1, 1, 'A')")
+        con.execute("INSERT INTO contacts (user_id, phone) VALUES (1, '+375291234567')")
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_alembic(path, ("upgrade", "head"))
+    assert "contacts" in tables(), "a refused drop keeps the rows"
+    with sqlite3.connect(path) as con:
+        con.execute("DELETE FROM contacts")
+    _run_alembic(path, ("upgrade", "head"))
+    assert "contacts" not in tables()
 
 
 # ── Scheduler delivery-state revision on SQLite ─────────────────────────

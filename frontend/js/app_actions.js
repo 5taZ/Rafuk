@@ -294,10 +294,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261111-channel-gate-check"),
-                context._loadScript("js/api_ai_render.js?v=20261111-channel-gate-check"),
-                context._loadScript("js/api_ai.js?v=20261111-channel-gate-check"),
-                context._loadScript("js/api_listing_assistant.js?v=20261111-channel-gate-check"),
+                context._loadScript("js/api_ai_modal.js?v=20261112-honest-total"),
+                context._loadScript("js/api_ai_render.js?v=20261112-honest-total"),
+                context._loadScript("js/api_ai.js?v=20261112-honest-total"),
+                context._loadScript("js/api_listing_assistant.js?v=20261112-honest-total"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -913,7 +913,7 @@ function createAppActions(baseContext) {
         if (providerLabel) {
             providerLabel.textContent = aiConsentInfo?.display_label || "провайдер AI настроен на сервере";
         }
-        const consentVersion = aiConsentInfo?.policy_version || "2026.2";
+        const consentVersion = aiConsentInfo?.policy_version || "2026.3";
 
         // Reset checkboxes
         aiCb.checked = false;
@@ -1007,11 +1007,76 @@ function createAppActions(baseContext) {
         document.addEventListener("keydown", onKeydown, true);
     }
 
-    function openPrivacyModal() {
+    // LEGAL-01: the agreement and the policy live once, as the public pages
+    // /legal/terms.html and /legal/privacy.html; the in-app sheet shows the
+    // same document instead of a second copy that could drift from it.
+    const _legalDocuments = new Map();
+    let _legalInfo = null;
+
+    async function _fetchLegalDocument(doc) {
+        if (_legalDocuments.has(doc)) return _legalDocuments.get(doc);
+        const response = await fetch(`/legal/${doc}.html`, { credentials: "same-origin" });
+        if (!response.ok) throw new Error(`legal_${response.status}`);
+        const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
+        const main = parsed.getElementById("legal-document");
+        if (!main) throw new Error("legal_missing");
+        main.querySelector("h1")?.remove();
+        const result = { title: main.dataset.legalTitle || "", nodes: Array.from(main.children) };
+        _legalDocuments.set(doc, result);
+        return result;
+    }
+
+    function _fillLegalDetails(root, info) {
+        const set = (selector, value) => {
+            if (!value) return;
+            for (const node of root.querySelectorAll(selector)) node.textContent = value;
+        };
+        set('[data-operator="name"]', info.operator_name);
+        set('[data-operator="address"]', info.operator_address);
+        set('[data-operator="email"]', info.operator_email);
+        set("[data-policy-version]", info.policy_version);
+        set("[data-ai-provider]", info.ai_provider);
+        const days = Number(info.inactive_account_retention_days);
+        set("[data-retention-days]", days > 0 ? String(days) : "без ограничения");
+    }
+
+    async function _showLegalDocument(modal, doc) {
+        const content = modal.querySelector(".privacy-content");
+        const title = modal.querySelector(".modal-title");
+        if (!content || typeof fetch !== "function" || typeof DOMParser !== "function") return;
+        try {
+            const [documentData, info] = await Promise.all([
+                _fetchLegalDocument(doc),
+                _legalInfo || core.getJson("/api/v1/legal/operator").catch(() => null),
+            ]);
+            if (info) _legalInfo = info;
+            content.replaceChildren(...documentData.nodes.map((node) => document.importNode(node, true)));
+            if (title && documentData.title) title.textContent = documentData.title;
+            if (_legalInfo) _fillLegalDetails(content, _legalInfo);
+            content.scrollTop = 0;
+        } catch (_) {
+            content.replaceChildren(domEl("p", {
+                className: "privacy-loading",
+                text: `Не удалось загрузить документ. Он доступен по адресу ${window.location.origin}/legal/${doc}.html`,
+            }));
+        }
+    }
+
+    function openPrivacyModal(doc = "privacy") {
         const modal = document.getElementById("privacy-modal");
         const overlay = document.getElementById("privacy-overlay");
         const closeBtn = document.getElementById("privacy-modal-close");
         if (!modal || !modal.hidden) return;
+        void _showLegalDocument(modal, doc === "terms" ? "terms" : "privacy");
+        // LEGAL-01: the two documents link to each other; follow the link
+        // inside the sheet instead of navigating the Mini App away.
+        function onDocumentLink(e) {
+            const link = e.target?.closest?.("a[data-legal-link]");
+            if (!link) return;
+            e.preventDefault();
+            void _showLegalDocument(modal, link.dataset.legalLink === "terms" ? "terms" : "privacy");
+        }
+        modal.addEventListener("click", onDocumentLink);
         // RV-UI-01: the policy goes through the shared modal helpers. It
         // stacks above the consent dialog (z-index in modals.css), takes
         // focus and inert while open — the consent dialog underneath goes
@@ -1024,6 +1089,7 @@ function createAppActions(baseContext) {
         function close() {
             closeBtn?.removeEventListener("click", close);
             overlay?.removeEventListener("click", close);
+            modal.removeEventListener("click", onDocumentLink);
             document.removeEventListener("keydown", onKeydown, true);
             closeModalAnimated(modal);
         }
@@ -1039,6 +1105,97 @@ function createAppActions(baseContext) {
         closeBtn?.addEventListener("click", close);
         overlay?.addEventListener("click", close);
         document.addEventListener("keydown", onKeydown, true);
+    }
+
+    const _TERMS_ACCEPTED_KEY = "rafuk:termsAcceptedVersion";
+
+    function _readAcceptedTermsVersion() {
+        try { return window.localStorage?.getItem(_TERMS_ACCEPTED_KEY) || ""; } catch (_) { return ""; }
+    }
+
+    function _rememberAcceptedTerms(version) {
+        try { window.localStorage?.setItem(_TERMS_ACCEPTED_KEY, version); } catch (_) {}
+    }
+
+    /**
+     * LEGAL-02: the core features process personal data under the user
+     * agreement, so it is accepted before the first use. Resolves once the
+     * server holds an acceptance of the current version. A failed check
+     * resolves too — the app's own requests then surface the auth,
+     * subscription or network error.
+     */
+    async function ensureTermsAccepted() {
+        if (isLocalDebugContext()) return;
+        let status;
+        try {
+            status = await core.getJson("/api/v1/account/consent/terms");
+        } catch (_) {
+            return;
+        }
+        if (status?.granted) {
+            _rememberAcceptedTerms(status.version || "");
+            return;
+        }
+        let version = "2026.3";
+        try {
+            const info = await core.getJson("/api/v1/legal/operator");
+            if (info) {
+                _legalInfo = info;
+                version = info.policy_version || version;
+            }
+        } catch (_) {}
+        await new Promise((resolve) => _showTermsModal(resolve, version));
+    }
+
+    /** True when this device already saw an acceptance of the current terms. */
+    function termsAcceptedLocally() {
+        return Boolean(_readAcceptedTermsVersion());
+    }
+
+    function _showTermsModal(resolve, version) {
+        const modal = document.getElementById("terms-modal");
+        const checkbox = document.getElementById("terms-checkbox");
+        const acceptBtn = document.getElementById("terms-accept-btn");
+        const declineBtn = document.getElementById("terms-decline-btn");
+        const termsLink = document.getElementById("terms-open-terms");
+        const privacyLink = document.getElementById("terms-open-privacy");
+        if (!modal || !checkbox || !acceptBtn) { resolve(); return; }
+        checkbox.checked = false;
+        acceptBtn.disabled = true;
+        openModalAnimated(modal);
+
+        const ac = new AbortController();
+        const opts = { signal: ac.signal };
+        checkbox.addEventListener("change", () => { acceptBtn.disabled = !checkbox.checked; }, opts);
+        termsLink?.addEventListener("click", (e) => { e.preventDefault(); openPrivacyModal("terms"); }, opts);
+        privacyLink?.addEventListener("click", (e) => { e.preventDefault(); openPrivacyModal("privacy"); }, opts);
+        acceptBtn.addEventListener("click", async () => {
+            if (acceptBtn.disabled) return;
+            acceptBtn.disabled = true;
+            try {
+                await core.postJson("/api/v1/account/consent", { consent_type: "terms", version });
+            } catch (err) {
+                showToast(err.message || "Не удалось сохранить принятие соглашения", "error");
+                acceptBtn.disabled = !checkbox.checked;
+                return;
+            }
+            _rememberAcceptedTerms(version);
+            ac.abort();
+            closeModalAnimated(modal, { onClosed: () => resolve() });
+        }, opts);
+        declineBtn?.addEventListener("click", () => {
+            try { window.Telegram?.WebApp?.close?.(); } catch (_) {}
+            showToast("Без принятия соглашения Rafuk недоступен", "info", 3200);
+        }, opts);
+        // The gate cannot be dismissed: Escape stays here unless the
+        // document sheet opened from it is on top and handles it itself.
+        document.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape") return;
+            const sheet = document.getElementById("privacy-modal");
+            if (sheet && !sheet.hidden) return;
+            e.stopPropagation();
+            e.preventDefault();
+        }, { capture: true, signal: ac.signal });
     }
 
     async function deleteAccount() {
@@ -1204,6 +1361,7 @@ function createAppActions(baseContext) {
     // Expose consent function on context so api_ai.js can call it
     context.checkAiConsent = checkAiConsent;
     context.openPrivacyModal = openPrivacyModal;
+    context.ensureTermsAccepted = ensureTermsAccepted;
     context.ensureAiLoaded = ensureAiLoaded;
 
     return {
@@ -1283,6 +1441,8 @@ function createAppActions(baseContext) {
         closeAIModal,
         checkAiConsent,
         openPrivacyModal,
+        ensureTermsAccepted,
+        termsAcceptedLocally,
         deleteAccount,
         exportAccountData,
         fetchProxyImageObjectUrl,

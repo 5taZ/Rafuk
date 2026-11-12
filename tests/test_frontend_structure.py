@@ -1026,8 +1026,12 @@ def test_listing_assistant_history_has_privacy_controls(
     ) in page_text
     assert "когда включено сохранение истории" in page_text
     assert "История пока пустая" in page_text
-    assert "История AI-помощника продавцу по умолчанию выключена" in page_text
-    assert "серверное удаление аккаунта её не удаляет" in page_text
+    # LEGAL-01: the policy text lives in the public /legal/privacy.html.
+    policy_text = BeautifulSoup(
+        (FRONTEND / "legal" / "privacy.html").read_text(encoding="utf-8"), "html.parser",
+    ).get_text(" ", strip=True)
+    assert "История AI-помощника продавцу по умолчанию выключена" in policy_text
+    assert "на других устройствах её нужно очистить кнопкой" in policy_text
 
     la_js = (JS_DIR / "api_listing_assistant.js").read_text(encoding="utf-8")
     assert 'const HISTORY_SAVE_KEY = "rafuk:listing-assistant:save-history";' in la_js

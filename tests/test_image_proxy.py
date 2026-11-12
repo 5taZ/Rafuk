@@ -150,7 +150,7 @@ def test_image_proxy_explicit_jpeg_format(
     assert response.headers["content-type"] == "image/jpeg"
 
 
-def test_image_proxy_caches_aggressively(
+def test_image_proxy_cache_is_private_and_short(
     client: TestClient,
     fake_upstream: None,
 ) -> None:
@@ -159,8 +159,8 @@ def test_image_proxy_caches_aggressively(
         headers={"Accept": "image/webp"},
     )
     assert response.status_code == 200
-    assert "max-age=2592000" in response.headers.get("cache-control", "")
-    assert "immutable" in response.headers.get("cache-control", "")
+    # LEGAL-06: sellers' photos stay a one-day copy in the viewer's browser.
+    assert response.headers.get("cache-control", "") == "private, max-age=86400"
     assert "Accept" in response.headers.get("vary", "")
 
 

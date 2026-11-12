@@ -15,8 +15,9 @@ URL shape: ``/api/v1/img/<gallery_path>?w=<width>&fmt=auto|webp|avif``
 * ``fmt`` defaults to ``auto`` which picks the best format the
   client advertised in ``Accept`` (AVIF > WebP > JPEG).
 
-Output carries ``Cache-Control: public, max-age=2592000, immutable``
-so the browser keeps the transcoded byte-stream for 30 days.
+Output carries ``Cache-Control: private, max-age=86400`` (LEGAL-06): the
+photos belong to Kufar sellers, so the transcoded copy stays a transient
+copy in the viewer's own browser for a day and no shared cache keeps it.
 
 Performance notes:
   * Pillow's encode/decode is sync and CPU-bound. We hand it off to
@@ -134,7 +135,7 @@ def _get_user_semaphore(user_key: str) -> asyncio.Semaphore:
 
 
 # In-process LRU for transcoded bytes. Browser cache does the
-# cross-request work (30-day Cache-Control), so this only catches
+# cross-request work (one-day private Cache-Control), so this only catches
 # duplicate hits within a session — same listing thumbnail visible
 # in "Все" + "Избранное" + tracker events at the same time. Keep
 # it small; oldest entries fall out when capacity is reached.
@@ -423,7 +424,8 @@ def _build_response(body: bytes, chosen_fmt: str, *, hit: str) -> Response:
         content=body,
         media_type=_content_type(chosen_fmt),
         headers={
-            "Cache-Control": "public, max-age=2592000, immutable",
+            # LEGAL-06: sellers' photos — no shared caches, no month-long copies.
+            "Cache-Control": "private, max-age=86400",
             # Tell caches to keep separate copies per Accept header so
             # AVIF clients don't poison the WebP entry.
             "Vary": "Accept",

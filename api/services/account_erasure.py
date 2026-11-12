@@ -34,7 +34,6 @@ from api.middleware.telegram_auth import FUTURE_AUTH_DATE_SKEW_SECONDS
 from api.models import (
     AdminAuditLog,
     AIAuditLog,
-    Contact,
     DealExpense,
     LeadItem,
     LeadItemPriceSnapshot,
@@ -328,7 +327,6 @@ async def purge_user_data(
         ("lead_items", LeadItem),
         ("trackers", Tracker),
         ("saved_searches", SavedSearch),
-        ("contacts", Contact),
         ("user_consents", UserConsent),
         ("ai_audit_log", AIAuditLog),
     ):

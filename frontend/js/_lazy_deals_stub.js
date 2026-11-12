@@ -18,9 +18,9 @@
  */
 /* global window */
 
-const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261111-channel-gate-check";
-const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261111-channel-gate-check";
-const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261111-channel-gate-check";
+const _LAZY_DEALS_API_LEADS_URL = "js/api_leads.js?v=20261112-honest-total";
+const _LAZY_DEALS_API_WATCHLIST_URL = "js/api_watchlist.js?v=20261112-honest-total";
+const _LAZY_DEALS_RENDER_MODALS_URL = "js/render_modals.js?v=20261112-honest-total";
 
 function _lazyLoadDealsSources(context) {
     if (_loadPromises.has("deals")) return _loadPromises.get("deals");

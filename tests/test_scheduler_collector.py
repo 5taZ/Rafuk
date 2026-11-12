@@ -44,6 +44,7 @@ from scheduler.collector import (
     check_reminders,
     check_trackers,
     cleanup_ai_audit_log,
+    cleanup_inactive_accounts,
     cleanup_inactive_listing_states,
     cleanup_old_events,
     cleanup_old_snapshots,
@@ -868,6 +869,42 @@ async def test_cleanup_ai_audit_log_ensures_partitions_on_postgres():
     assert deleted == 0
     assert "ensure_ai_audit_log_monthly_partitions" in session.statements[0]
     assert "DELETE FROM ai_audit_log" in session.statements[1]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_inactive_accounts_erases_only_idle_free_accounts(populated_session):
+    # LEGAL-05: an account nobody has opened for the retention period goes;
+    # an active tracker, a granted status or admin rights keep it.
+    from types import SimpleNamespace
+
+    from api.models import User
+
+    session, user, _tracker = populated_session
+    long_ago = datetime.now(UTC) - timedelta(days=800)
+    user.last_seen_at = long_ago
+    idle = make_user(telegram_user_id=7001, first_name="Idle", last_seen_at=long_ago)
+    never_seen = make_user(telegram_user_id=7002, first_name="Old", created_at=long_ago)
+    paused_only = make_user(telegram_user_id=7003, first_name="Paused", last_seen_at=long_ago)
+    recent = make_user(
+        telegram_user_id=7004, first_name="Recent",
+        last_seen_at=datetime.now(UTC) - timedelta(days=10),
+    )
+    granted = make_user(
+        telegram_user_id=7005, first_name="Granted", last_seen_at=long_ago,
+        account_status_code="scout",
+    )
+    admin = make_user(telegram_user_id=7006, first_name="Admin", last_seen_at=long_ago)
+    session.add_all([idle, never_seen, paused_only, recent, granted, admin])
+    await session.flush()
+    session.add(Tracker(user_id=paused_only.id, query="old", strict_mode=False, active=False))
+    await session.flush()
+
+    settings = SimpleNamespace(admin_telegram_user_ids="7006")
+    assert await cleanup_inactive_accounts(session, days=0, settings=settings) == 0
+    erased = await cleanup_inactive_accounts(session, days=730, settings=settings)
+    assert erased == 3
+    left = set((await session.execute(select(User.telegram_user_id))).scalars())
+    assert left == {user.telegram_user_id, 7004, 7005, 7006}
 
 
 @pytest.mark.asyncio

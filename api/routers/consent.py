@@ -21,7 +21,6 @@ from api.limiter import limiter
 from api.models import (
     TRACKER_PAUSE_REASON_BOT_BLOCKED,
     AIAuditLog,
-    Contact,
     DealExpense,
     LeadItem,
     LeadItemPriceSnapshot,
@@ -91,13 +90,7 @@ def _export_json_default(value: object) -> object:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-@router.get("/ai-consent-info", response_model=AIConsentInfoResponse)
-@limiter.limit("20/minute")
-async def get_ai_consent_info(
-    request: Request,
-    _user=Depends(get_telegram_user),
-):
-    settings = get_settings()
+def ai_consent_info(settings) -> AIConsentInfoResponse:
     host = _ai_provider_host(settings.ai_base_url)
     provider = (
         (settings.ai_provider_name or _default_ai_provider_name(host)).strip()
@@ -116,6 +109,15 @@ async def get_ai_consent_info(
         policy_version=CURRENT_POLICY_VERSION,
         display_label=display_label,
     )
+
+
+@router.get("/ai-consent-info", response_model=AIConsentInfoResponse)
+@limiter.limit("20/minute")
+async def get_ai_consent_info(
+    request: Request,
+    _user=Depends(get_telegram_user),
+):
+    return ai_consent_info(get_settings())
 
 
 @router.get("/consent/{consent_type}", response_model=ConsentStatusResponse)
@@ -295,6 +297,13 @@ async def revoke_consent(
     if consent_type not in VALID_CONSENT_TYPES:
         raise HTTPException(
             status_code=400, detail="Указанный тип согласия не найден"
+        )
+    if consent_type == "terms":
+        # LEGAL-02: the agreement ends with the account; a revoked "terms"
+        # row would leave the data with no basis while the account lives.
+        raise HTTPException(
+            status_code=400,
+            detail="Чтобы отказаться от пользовательского соглашения, удалите аккаунт в профиле.",
         )
 
     revoked_count = 0
@@ -813,25 +822,6 @@ async def export_account_data(
             for w in watchlist
         ]
 
-        contacts = (
-            await session.execute(
-                select(Contact)
-                .where(Contact.user_id == uid)
-                .order_by(Contact.saved_at.desc())
-                .limit(export_row_cap)
-            )
-        ).scalars().all()
-        contacts_data = [
-            {
-                "id": c.id,
-                "phone": c.phone,
-                "seller_name": c.seller_name,
-                "kufar_profile": c.kufar_profile,
-                "saved_at": c.saved_at.isoformat() if c.saved_at else None,
-            }
-            for c in contacts
-        ]
-
         notification_dlq = (
             await session.execute(
                 select(TelegramNotificationDLQ)
@@ -874,7 +864,6 @@ async def export_account_data(
         "consents": len(consents_data) >= export_row_cap,
         "ai_audit_logs": len(ai_audit_logs_data) >= export_row_cap,
         "watchlist": len(watchlist_data) >= export_row_cap,
-        "contacts": len(contacts_data) >= export_row_cap,
         "notification_dlq": len(notification_dlq_data) >= export_row_cap,
     }
 
@@ -888,7 +877,6 @@ async def export_account_data(
         "reminders": reminders_data,
         "expenses": expenses_data,
         "watchlist": watchlist_data,
-        "contacts": contacts_data,
         "notification_dlq": notification_dlq_data,
         "consents": consents_data,
         "ai_audit_logs": ai_audit_logs_data,

@@ -52,17 +52,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261111-channel-gate-check">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261111-channel-gate-check">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261112-honest-total">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261112-honest-total">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261111-channel-gate-check" crossorigin>
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261111-channel-gate-check" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261111-channel-gate-check" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261112-honest-total" crossorigin>
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-honest-total" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-honest-total" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -77,8 +77,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20261111-channel-gate-check" crossorigin>
-    <link rel="stylesheet" href="css/style.css?v=20261111-channel-gate-check" integrity="sha384-yQHCzUNCns5mlq30nvUHklVQBddLvGJPA60kT1VdxVxMN2KWBmSnjPSPhXItlxqH" crossorigin>
+    <link rel="preload" as="style" href="css/style.css?v=20261112-honest-total" crossorigin>
+    <link rel="stylesheet" href="css/style.css?v=20261112-honest-total" integrity="sha384-beeKjD23pjj6DGzUSuLvhcKXSK2HZywau0GiHt+QVgsLfqgoStToZqSltKTKXptK" crossorigin>
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -95,14 +95,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20261111-channel-gate-check"
+            src="vendor/telegram-web-app.js?v=20261112-honest-total"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of price history. Price distribution uses HTML.
          Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20261111-channel-gate-check"></script>
+    <script defer src="js/app_bundle.js?v=20261112-honest-total"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -125,7 +125,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20261111-channel-gate-check" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20261112-honest-total" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -189,6 +189,20 @@
             <button class="search-btn" id="search-btn" type="button">
                 <span id="search-btn-label">Найти</span>
             </button>
+        </div>
+        <div class="category-picker" id="category-picker" role="group" aria-labelledby="category-picker-title" hidden>
+            <div class="category-picker-head">
+                <span class="category-picker-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 5h18l-7 8v6l-4 2v-8z"/>
+                    </svg>
+                </span>
+                <div class="category-picker-copy">
+                    <p class="category-picker-title" id="category-picker-title">Что именно ищете?</p>
+                    <p class="category-picker-sub">Нашлись разные товары. Выберите категорию — покажем точную цену.</p>
+                </div>
+            </div>
+            <div class="category-picker-options" id="category-picker-options"></div>
         </div>
         <label class="strict-toggle" for="strict-search-toggle" title="Точное совпадение запроса" hidden>
             <input id="strict-search-toggle" type="checkbox" checked aria-label="Строгий поиск включён (точное совпадение)">
@@ -680,7 +694,7 @@
 
     <section class="view-panel profile-view" id="profile-view" hidden role="region" aria-labelledby="profile-view-title">
         <div class="profile-content" id="profile-content"></div>
-        <button class="ghost-btn profile-privacy-btn" id="privacy-btn" type="button">Политика конфиденциальности</button>
+        <button class="ghost-btn profile-privacy-btn" id="privacy-btn" type="button">Соглашение и политика</button>
     </section>
 
     <section class="view-panel admin-view" id="admin-view" hidden role="region" aria-labelledby="admin-view-title">
@@ -1169,6 +1183,28 @@
     <!-- FE-NEW-6: aria-live container so SR announces toast feedback. -->
     <div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
+    <!-- LEGAL-02: user agreement acceptance before the first use -->
+    <div class="modal-overlay" id="terms-modal" hidden>
+        <div class="modal-content consent-modal-content" role="dialog" aria-modal="true" aria-labelledby="terms-modal-title">
+            <div class="modal-header">
+                <h3 class="modal-title" id="terms-modal-title">Перед началом работы</h3>
+            </div>
+            <div class="modal-body consent-body">
+                <p class="consent-intro">Rafuk работает по пользовательскому соглашению. Для этого сервис обрабатывает ваш Telegram ID, имя, поисковые запросы, трекеры и данные сделок, которые вы вводите.</p>
+                <p class="consent-detail">AI-анализ включается отдельно и только с вашего согласия.</p>
+                <p class="consent-detail"><a href="/legal/terms.html" id="terms-open-terms">Пользовательское соглашение</a> · <a href="/legal/privacy.html" id="terms-open-privacy">Политика обработки персональных данных</a></p>
+                <label class="consent-check">
+                    <input type="checkbox" id="terms-checkbox">
+                    <span>Я принимаю пользовательское соглашение и ознакомлен с политикой обработки персональных данных</span>
+                </label>
+                <div class="modal-actions consent-actions">
+                    <button class="primary-btn" id="terms-accept-btn" type="button" disabled>Принимаю</button>
+                    <button class="ghost-btn" id="terms-decline-btn" type="button">Не принимаю</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- AI Consent Modal -->
     <div class="modal-overlay" id="consent-modal" hidden>
         <div class="modal-content consent-modal-content" role="dialog" aria-modal="true" aria-labelledby="consent-modal-title">
@@ -1189,7 +1225,7 @@
                 </label>
                 <label class="consent-check">
                     <input type="checkbox" id="consent-pd-checkbox">
-                    <span>Я ознакомился с <a href="#" id="consent-privacy-link">политикой конфиденциальности</a></span>
+                    <span>Я ознакомился с <a href="#" id="consent-privacy-link">политикой обработки персональных данных</a></span>
                 </label>
                 <div class="modal-actions consent-actions">
                     <button class="primary-btn" id="consent-accept-btn" type="button" disabled>Согласен</button>
@@ -1204,58 +1240,11 @@
         <div class="detail-overlay" id="privacy-overlay"></div>
         <div class="detail-sheet" role="dialog" aria-modal="true" aria-labelledby="privacy-modal-title">
             <div class="modal-header">
-                <h3 class="modal-title" id="privacy-modal-title">Политика конфиденциальности</h3>
+                <h3 class="modal-title" id="privacy-modal-title">Политика обработки персональных данных</h3>
                 <button class="modal-close" id="privacy-modal-close" type="button" aria-label="Закрыть">&times;</button>
             </div>
             <div class="detail-sheet-content privacy-content" id="privacy-content">
-                <section class="privacy-section">
-                    <h4>1. Оператор персональных данных</h4>
-                    <p>Оператором персональных данных является разработчик приложения Rafuk. Для связи используйте чат Telegram-бота, из которого открыто приложение. Экспорт, удаление данных и отзыв согласий доступны в профиле, в разделе «Мои данные и согласия».</p>
-                </section>
-                <section class="privacy-section">
-                    <h4>2. Какие данные мы собираем</h4>
-                    <table class="privacy-table">
-                        <thead><tr><th>Категория</th><th>Данные</th><th>Источник</th></tr></thead>
-                        <tbody>
-                            <tr><td>Идентификация</td><td>telegram_user_id, first_name, username</td><td>Telegram initData</td></tr>
-                            <tr><td>Поисковая активность</td><td>поисковые запросы, фильтры</td><td>Пользователь</td></tr>
-                            <tr><td>Финансовые</td><td>цены покупки/продажи, расходы</td><td>Пользователь</td></tr>
-                            <tr><td>Поведенческие</td><td>заметки к лидам, запросы трекеров</td><td>Пользователь</td></tr>
-                            <tr><td>Технические</td><td>IP-адрес при согласии, журнал AI-операций, ошибки доставки уведомлений</td><td>Сервер и Telegram</td></tr>
-                            <tr><td>Публичные данные объявлений</td><td>текст, параметры, цены, фото, регион и ссылки объявлений Kufar</td><td>Kufar</td></tr>
-                        </tbody>
-                    </table>
-                </section>
-                <section class="privacy-section">
-                    <h4>3. Цели обработки</h4>
-                    <p>Данные используются для: аналитики рынка Kufar, уведомлений о ценах, AI-рекомендаций по цене, управления сделками.</p>
-                </section>
-                <section class="privacy-section">
-                    <h4>4. Трансграничная передача</h4>
-                    <p>Данные могут передаваться за пределы Республики Беларусь: в Telegram для авторизации Mini App и доставки уведомлений; в Kufar при получении объявлений и изображений; во внешний AI-сервис для анализа объявлений. Если в стране получателя не обеспечивается надлежащий уровень защиты прав субъектов персональных данных, передача выполняется только при отдельном согласии с информированием о возможных рисках.</p>
-                </section>
-                <section class="privacy-section">
-                    <h4>5. AI-обработка</h4>
-                    <p>В AI-сервис отправляются: текст объявления, фотографии, параметры товара, рыночная статистика, похожие объявления и введённые пользователем черновики/заметки помощника продавца. Система маскирует очевидные телефоны, e-mail, Telegram-ники и документные номера в тексте, но фотографии и свободный текст могут содержать персональные данные. Возвращаются: оценка состояния, справедливая цена, рекомендации и риски.</p>
-                </section>
-                <section class="privacy-section">
-                    <h4>6. Хранение данных</h4>
-                    <p>Данные хранятся на сервере оператора и в локальном хранилище браузера/Telegram WebView. Данные аккаунта хранятся до удаления аккаунта, журнал AI-операций — до 365 дней, события трекеров и устаревшие снимки рынка — до 30–90 дней, техническая очередь ошибок Telegram — до 30 дней. AI-кэш задач и помощника продавцу хранится временно в привязке к пользователю и очищается при удалении аккаунта; общий кэш анализа публичного объявления может сохраняться без привязки к пользователю до истечения срока кэша. История AI-помощника продавцу по умолчанию выключена; если включена, хранится локально до 30 дней и очищается кнопкой в модальном окне; серверное удаление аккаунта её не удаляет.</p>
-                </section>
-                <section class="privacy-section">
-                    <h4>7. Ваши права</h4>
-                    <ul>
-                        <li><strong>Доступ</strong> — вы можете экспортировать свои данные в профиле, раздел «Мои данные и согласия»</li>
-                        <li><strong>Информация о передаче</strong> — вы можете запросить сведения о предоставлении данных третьим лицам</li>
-                        <li><strong>Исправление</strong> — вы можете изменить неточные данные в интерфейсе или обратиться к оператору</li>
-                        <li><strong>Удаление</strong> — вы можете удалить аккаунт и серверные данные</li>
-                        <li><strong>Отзыв согласия</strong> — вы можете отозвать согласие на AI-обработку и трансграничную передачу</li>
-                    </ul>
-                </section>
-                <section class="privacy-section">
-                    <h4>8. Изменения политики</h4>
-                    <p>При изменении политики мы запросим повторное согласие. Версия: 2026.2</p>
-                </section>
+                <p class="privacy-loading">Загрузка документа…</p>
             </div>
         </div>
     </div>
