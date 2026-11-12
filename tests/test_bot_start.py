@@ -208,11 +208,12 @@ async def test_dispatcher_ignores_commands_outside_private_chats(
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_still_answers_private_chats(dispatcher) -> None:
+@pytest.mark.parametrize("command", ["/start", "/help"])
+async def test_greeting_offers_the_mini_app(dispatcher, command: str) -> None:
     from aiogram.dispatcher.event.bases import UNHANDLED
 
     bot = AsyncMock()
-    message = _chat_message("private", "/start").as_(bot)
+    message = _chat_message("private", command).as_(bot)
     result = await dispatcher.propagate_event(
         update_type="message", event=message, bot=bot,
     )
@@ -220,32 +221,8 @@ async def test_dispatcher_still_answers_private_chats(dispatcher) -> None:
     assert result is not UNHANDLED
     bot.assert_awaited_once()
     reply = bot.await_args.args[0]
+    assert reply.text == "Rafuk — цены, объявления и автопоиск на Kufar."
     assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
-
-
-@pytest.mark.asyncio
-async def test_help_answers_with_the_start_greeting(dispatcher) -> None:
-    """Older greetings in users' chats still mention /help."""
-    bot = AsyncMock()
-    message = _chat_message("private", "/help").as_(bot)
-    await dispatcher.propagate_event(update_type="message", event=message, bot=bot)
-
-    bot.assert_awaited_once()
-    reply = bot.await_args.args[0]
-    assert reply.text.startswith("Rafuk — цены, объявления и автопоиск на Kufar.")
-    assert reply.reply_markup.inline_keyboard[0][0].web_app.url.startswith("https://")
-    # LEGAL-01: the agreement and the policy are public before the first use.
-    assert "/legal/terms.html" in reply.text
-    assert "/legal/privacy.html" in reply.text
-
-
-def test_legal_links_point_at_the_mini_app_host() -> None:
-    from bot.handlers.start import legal_links
-
-    links = legal_links("https://app.example.by/index.html?x=1")
-    assert "https://app.example.by/legal/terms.html" in links
-    assert "https://app.example.by/legal/privacy.html" in links
-    assert legal_links("http://localhost:8081") == ""
 
 
 @pytest.mark.asyncio
@@ -435,15 +412,21 @@ async def test_check_button_after_subscribing_opens_the_requested_view(
 
 
 @pytest.mark.asyncio
-async def test_check_button_rejects_unknown_view(dispatcher, channel_gate) -> None:
+@pytest.mark.parametrize("callback_data", ["sub_check", "sub_check:evil"])
+async def test_check_button_opens_the_mini_app_without_a_known_view(
+    dispatcher, channel_gate, callback_data: str,
+) -> None:
     channel_gate.members[42] = True
     bot = AsyncMock()
     await dispatcher.propagate_event(
-        update_type="callback_query", event=_callback("sub_check:evil", bot), bot=bot,
+        update_type="callback_query", event=_callback(callback_data, bot), bot=bot,
     )
 
     (edited,) = _calls(bot, "EditMessageText")
-    assert "Rafuk — цены" in edited.text
+    assert edited.text == (
+        "✅ Подписка подтверждена — добро пожаловать!\n\n"
+        "Rafuk — цены, объявления и автопоиск на Kufar."
+    )
     assert "start_param" not in edited.reply_markup.inline_keyboard[0][0].web_app.url
 
 

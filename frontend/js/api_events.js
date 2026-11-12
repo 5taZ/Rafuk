@@ -145,6 +145,14 @@ function createApiEvents(context) {
             }
         });
 
+        elements.searchClearButton?.addEventListener("click", () => {
+            clearTimeout(_searchDebounce.timer);
+            elements.searchInput.value = "";
+            void search("overview");
+            elements.searchInput.focus({ preventScroll: true });
+            _haptic("light");
+        });
+
         elements.searchButton?.addEventListener("click", () => {
             clearTimeout(_searchDebounce.timer);
             void search("overview");

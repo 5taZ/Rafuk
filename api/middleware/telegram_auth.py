@@ -22,6 +22,7 @@ class TelegramInitData:
     # SEC-07: set for the bot's X-Internal-Service-Token principal, which
     # may act for any user but must never inherit that user's admin role.
     via_service_token: bool = False
+    channel_subscription_confirmed: bool = False
 
 
 def verify_telegram_init_data(

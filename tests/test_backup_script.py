@@ -47,14 +47,15 @@ exit 2
     env = {
         **os.environ,
         "DATABASE_URL": "postgresql+asyncpg://user%2Bname:p%40ss%3Aword@db-host:6543/kufar%20db?sslmode=require",
-        "BACKUP_DIR": str(backup_dir),
+        "BACKUP_DIR": backup_dir.name,
         "RETENTION_DAYS": "30",
-        "PGDUMP_CAPTURE": str(capture),
+        "PGDUMP_CAPTURE": capture.name,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
     }
+    script = Path(__file__).resolve().parents[1] / "scripts/backup.sh"
     result = subprocess.run(
-        [bash_executable(), "scripts/backup.sh"],
-        cwd=Path(__file__).resolve().parents[1],
+        [bash_executable(), script.as_posix()],
+        cwd=tmp_path,
         env=env,
         text=True, encoding="utf-8",
         capture_output=True,

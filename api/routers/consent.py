@@ -44,6 +44,7 @@ from api.services.account_erasure import (
     purge_user_data,
     tombstone_ttl_seconds,
 )
+from api.services.account_status import activate_pro_trial
 from api.services.ai_audit import audit_text_sha256, sanitize_audit_text
 from api.services.client_ip import get_client_ip
 from api.services.consent_policy import CURRENT_POLICY_VERSION, VALID_CONSENT_TYPES
@@ -208,7 +209,13 @@ async def grant_consent(
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
 
+        can_activate_trial = (
+            payload.consent_type == "terms" and _user.channel_subscription_confirmed
+        )
         if existing and existing.version == payload.version:
+            if can_activate_trial:
+                await activate_pro_trial(session, uid)
+                await session.commit()
             return ConsentStatusResponse(
                 consent_type=payload.consent_type,
                 granted=True,
@@ -231,6 +238,9 @@ async def grant_consent(
         )
         session.add(consent)
         try:
+            if can_activate_trial:
+                await session.flush()
+                await activate_pro_trial(session, uid)
             await session.commit()
         except IntegrityError:
             # DB-M6: the new UNIQUE partial index on

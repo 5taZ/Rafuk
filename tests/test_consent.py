@@ -8,7 +8,7 @@ import hmac
 import json
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import pytest
@@ -981,6 +981,64 @@ def _erasure_client(target_app, **transport_kwargs) -> AsyncClient:
         base_url="http://test",
         headers={"origin": "http://localhost:8081", "x-requested-with": "XMLHttpRequest"},
     )
+
+
+@pytest.mark.parametrize("membership_at_acceptance", [True, None])
+async def test_new_user_pro_trial_requires_terms_and_confirmed_membership(
+    erasure_app, monkeypatch, membership_at_acceptance,
+):
+    from sqlalchemy import select
+
+    from api import dependencies
+    from api.models import User
+    from api.services import channel_subscription
+
+    tg_id = 777008
+    membership = False
+
+    async def fetch_membership(bot_token, channel, user_id):
+        assert user_id == tg_id
+        return membership
+
+    monkeypatch.setattr(erasure_app.state.settings, "required_channel", "TrialChannel")
+    monkeypatch.setattr(dependencies, "get_settings", lambda: erasure_app.state.settings)
+    monkeypatch.setattr(channel_subscription, "fetch_channel_membership", fetch_membership)
+    headers = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()))}
+    terms_url = "/api/v1/account/consent"
+    terms = {"consent_type": "terms", "version": "2026.3"}
+    profile_url = "/api/v1/profile/me"
+    session_factory = erasure_app.state.session_factory
+    user_query = select(User).where(User.telegram_user_id == tg_id)
+
+    async with _erasure_client(erasure_app) as client:
+        assert (await client.post(terms_url, json=terms, headers=headers)).status_code == 403
+        membership = membership_at_acceptance
+        assert (await client.get(f"{terms_url}/terms", headers=headers)).json()["granted"] is False
+        await _drain_provision_tasks()
+        profile = (await client.get(profile_url, headers=headers)).json()
+        assert profile["status"]["code"] == "bare_search"
+        assert (await client.post(terms_url, json=terms, headers=headers)).status_code == 201
+
+        async with session_factory() as session:
+            user = (await session.scalars(user_query)).one()
+            assert user.account_status_code == ("scout" if membership else "bare_search")
+
+        membership = True
+        status = (await client.get(profile_url, headers=headers)).json()["status"]
+        assert status["code"] == "scout"
+        assert datetime.fromisoformat(status["expires_at"]) - datetime.fromisoformat(
+            status["granted_at"],
+        ) == timedelta(days=3)
+
+        assert (await client.post(terms_url, json=terms, headers=headers)).status_code == 201
+        assert (await client.get(profile_url, headers=headers)).json()["status"] == status
+        async with session_factory() as session:
+            user = (await session.scalars(user_query)).one()
+            assert user.pro_trial_eligible is False
+            user.status_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+        profile = (await client.get(profile_url, headers=headers)).json()
+        assert profile["status"]["code"] == "bare_search"
 
 
 async def _seed_erasure_user(session_factory, telegram_user_id: int) -> None:

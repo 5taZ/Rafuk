@@ -52,17 +52,17 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#0a0a0b">
     <title>Rafuk</title>
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261112-honest-total">
-    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261112-honest-total">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg?v=20261112-v37">
+    <link rel="apple-touch-icon" href="/assets/logo.svg?v=20261112-v37">
     <!-- Kufar CDN serves every listing thumbnail. preconnect fires
          the TLS handshake during HTML parse so the first <img src>
          doesn't pay for it — saves ~150-300ms on first card paint
          depending on the user's network RTT. -->
     <link rel="preconnect" href="https://rms.kufar.by" crossorigin>
     <link rel="dns-prefetch" href="https://rms.kufar.by">
-    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261112-honest-total" crossorigin>
-    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-honest-total" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
-    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-honest-total" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
+    <link rel="preload" as="style" href="vendor/fonts/fonts.css?v=20261112-v37" crossorigin>
+    <link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-v37" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin>
+    <noscript><link rel="stylesheet" href="vendor/fonts/fonts.css?v=20261112-v37" integrity="sha384-F82+7wHpJBgKjiVJV/G29TS/LPZOdFIhPaNTi4jhWcYvE+vnct6Us9rQFfKKexJ+" crossorigin></noscript>
     <!-- FE-M1: Preload the bundled stylesheet so the browser starts
          fetching it during HTML parse, in parallel with the font
          CSS request above. The subsequent ``<link rel="stylesheet">``
@@ -77,8 +77,8 @@
          modal/pipeline surfaces — a separate wave's worth of
          careful testing. The preload alone is the safe-by-default
          improvement. -->
-    <link rel="preload" as="style" href="css/style.css?v=20261112-honest-total" crossorigin>
-    <link rel="stylesheet" href="css/style.css?v=20261112-honest-total" integrity="sha384-beeKjD23pjj6DGzUSuLvhcKXSK2HZywau0GiHt+QVgsLfqgoStToZqSltKTKXptK" crossorigin>
+    <link rel="preload" as="style" href="css/style.css?v=20261112-v37" crossorigin>
+    <link rel="stylesheet" href="css/style.css?v=20261112-v37" integrity="sha384-jgk+Ema27QiSaUKPx/dEEpNxZcJ8ZD5cIvM34jUOvl6E88U8sX+H3yo4oDsGj1ow" crossorigin>
     <!-- SEC-03/FE-01: Telegram WebApp SDK is vendored at
          frontend/vendor/telegram-web-app.js so we can pin a SHA-384
          hash via SRI. Loading the upstream CDN version directly is
@@ -95,14 +95,14 @@
          then bump the ?v= cache-buster (scripts/bump_static_version.sh)
          and the integrity hash below in the same commit. -->
     <script defer
-            src="vendor/telegram-web-app.js?v=20261112-honest-total"
+            src="vendor/telegram-web-app.js?v=20261112-v37"
             integrity="sha384-1XuC9S4cgk6RH1oCsL2diDRwLiiivu/oZHNfxYUitEFuiKpP5ceNbzu220KKrcK+"
             crossorigin="anonymous"></script>
     <!-- Chart.js (~200 KB) is vendored and lazy-loaded by render_charts.js
          on first paint of price history. Price distribution uses HTML.
          Keeps the initial bundle smaller for users who only
          use the watchlist or trackers without leaking IP to a CDN. -->
-    <script defer src="js/app_bundle.js?v=20261112-honest-total"></script>
+    <script defer src="js/app_bundle.js?v=20261112-v37"></script>
 </head>
 <body>
 <div id="offline-badge" class="offline-badge" hidden>Оффлайн</div>
@@ -125,7 +125,7 @@
     <header class="header">
         <div class="header-inner">
             <a class="logo" href="/" aria-label="Rafuk — на главную">
-                <img class="logo-mark" src="/assets/logo.svg?v=20261112-honest-total" alt="" width="28" height="28" decoding="async">
+                <img class="logo-mark" src="/assets/logo.svg?v=20261112-v37" alt="" width="28" height="28" decoding="async">
                 <span class="logo-name">Rafuk</span>
             </a>
             <div class="header-actions">
@@ -186,6 +186,7 @@
                 enterkeyhint="search"
                 aria-label="Поиск по запросу"
             >
+            <button class="search-clear-btn" id="search-clear-btn" type="button" aria-label="Очистить запрос">×</button>
             <button class="search-btn" id="search-btn" type="button">
                 <span id="search-btn-label">Найти</span>
             </button>
@@ -1191,6 +1192,7 @@
             </div>
             <div class="modal-body consent-body">
                 <p class="consent-intro">Rafuk работает по пользовательскому соглашению. Для этого сервис обрабатывает ваш Telegram ID, имя, поисковые запросы, трекеры и данные сделок, которые вы вводите.</p>
+                <p class="consent-detail">После принятия соглашения и подтверждения подписки на канал новым пользователям доступен Pro на 3 дня бесплатно.</p>
                 <p class="consent-detail">AI-анализ включается отдельно и только с вашего согласия.</p>
                 <p class="consent-detail"><a href="/legal/terms.html" id="terms-open-terms">Пользовательское соглашение</a> · <a href="/legal/privacy.html" id="terms-open-privacy">Политика обработки персональных данных</a></p>
                 <label class="consent-check">

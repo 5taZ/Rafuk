@@ -789,6 +789,31 @@ body {
     opacity: 0.5;
 }
 
+.search-input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.search-clear-btn {
+    flex: 0 0 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-lg);
+    background: transparent;
+    color: var(--text-muted);
+    font: 24px/1 var(--font);
+    cursor: pointer;
+}
+
+.search-clear-btn:hover,
+.search-clear-btn:focus-visible {
+    color: var(--text);
+}
+
+.search-input:placeholder-shown + .search-clear-btn {
+    display: none;
+}
+
 .search-btn {
     margin: 5px;
     padding: 0 20px;

@@ -10,6 +10,7 @@ const APP_REGIONS = {
 
 function cacheAppElements(elements) {
     elements.searchInput = document.getElementById("search-input");
+    elements.searchClearButton = document.getElementById("search-clear-btn");
     elements.searchButton = document.getElementById("search-btn");
     elements.searchButtonLabel = document.getElementById("search-btn-label");
     elements.searchSection = document.querySelector(".search-section");

@@ -79,9 +79,9 @@ async def fetch_channel_membership(bot_token: str, channel: str, user_id: int) -
     return None
 
 
-async def is_channel_subscriber(
+async def _channel_membership(
     cache: Any, *, bot_token: str, channel: str, user_id: int, use_cache: bool = True,
-) -> bool:
+) -> bool | None:
     key = f"chansub:{channel.lower()}:{int(user_id)}"
     if use_cache and cache is not None:
         try:
@@ -90,14 +90,20 @@ async def is_channel_subscriber(
         except Exception:  # noqa: BLE001 — a Redis blip falls back to Telegram
             logger.debug("Subscription cache read failed", exc_info=True)
     member = await fetch_channel_membership(bot_token, channel, user_id)
-    if member is None:
-        return True
     if member and cache is not None:
         try:
             await cache.set(key, "1", ttl=_MEMBER_CACHE_TTL_SECONDS)
         except Exception:  # noqa: BLE001
             logger.debug("Subscription cache write failed", exc_info=True)
     return member
+
+
+async def is_channel_subscriber(
+    cache: Any, *, bot_token: str, channel: str, user_id: int, use_cache: bool = True,
+) -> bool:
+    return await _channel_membership(
+        cache, bot_token=bot_token, channel=channel, user_id=user_id, use_cache=use_cache,
+    ) is not False
 
 
 def subscription_required_error(channel: str) -> HTTPException:
@@ -112,12 +118,14 @@ def subscription_required_error(channel: str) -> HTTPException:
     )
 
 
-async def require_channel_subscription(cache: Any, settings: Any, user_id: int) -> None:
+async def require_channel_subscription(cache: Any, settings: Any, user_id: int) -> bool:
+    """Enforce access and report whether Telegram confirmed membership."""
     channel = required_channel(settings)
     if not channel or is_admin_user(user_id, settings):
-        return
-    if await is_channel_subscriber(
+        return False
+    member = await _channel_membership(
         cache, bot_token=settings.bot_token.get_secret_value(), channel=channel, user_id=user_id,
-    ):
-        return
-    raise subscription_required_error(channel)
+    )
+    if member is False:
+        raise subscription_required_error(channel)
+    return member is True

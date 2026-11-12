@@ -19,6 +19,7 @@ from sqlalchemy import (
     and_,
     column,
     event,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -202,6 +203,8 @@ class User(Base):
         DateTime(timezone=True), nullable=True,
     )
     status_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Only accounts registered by the app after this column was added qualify.
+    pro_trial_eligible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=false())
 
     # Relationships
     account_status = relationship("AccountStatus", back_populates="users")

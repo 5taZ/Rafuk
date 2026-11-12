@@ -12,6 +12,7 @@ import os
 import pathlib
 
 import pytest
+from playwright.sync_api import expect
 
 pytestmark = pytest.mark.skipif(
     os.getenv("KUFAR_E2E") != "1",
@@ -43,3 +44,35 @@ def test_homepage_loads_without_critical_a11y_violations(page, frontend_url):
         if v["impact"] in ("critical", "serious")
     ]
     assert serious == [], f"Critical/serious a11y violations: {serious}"
+
+
+def test_mobile_search_clear_removes_query_and_category_picker(new_context, frontend_url):
+    page = new_context(
+        viewport={"width": 320, "height": 640}, is_mobile=True, has_touch=True,
+        service_workers="block",
+    ).new_page()
+    page.route("**/api/v1/**", lambda route: route.fulfill(json={"items": [], "listings": []}))
+    page.route("**/api/v1/price-stats?*", lambda route: route.fulfill(json={
+        "count": 2,
+        "total_results": 2,
+        "categories": [
+            {"id": 1, "label": "Мобильные телефоны", "count": 1},
+            {"id": 2, "label": "Аксессуары", "count": 1},
+        ],
+    }))
+    page.goto(frontend_url)
+
+    search_input = page.get_by_role("searchbox")
+    clear_button = page.get_by_role("button", name="Очистить запрос")
+    category_picker = page.locator("#category-picker")
+    expect(clear_button).to_be_hidden()
+    search_input.fill("iPhone 18 Pro")
+    page.get_by_role("button", name="Найти", exact=True).tap()
+    expect(category_picker).to_be_visible()
+    expect(clear_button).to_be_visible()
+
+    clear_button.tap()
+    expect(search_input).to_have_value("")
+    expect(search_input).to_be_focused()
+    expect(clear_button).to_be_hidden()
+    expect(category_picker).to_be_hidden()

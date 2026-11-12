@@ -210,7 +210,9 @@ async def get_telegram_user(
     # The chat menu button opens the Mini App without the bot's /start
     # gate, so the API checks the channel subscription itself. Before the
     # state is set: the auto-provision middleware skips refused users.
-    await require_channel_subscription(cache, settings, user.user_id)
+    user.channel_subscription_confirmed = await require_channel_subscription(
+        cache, settings, user.user_id,
+    )
 
     # SEC-H1: track first-seen IP per initData and log on mismatch.
     # We can't outright reject replay (the Mini App genuinely reuses

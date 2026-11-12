@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261112_0036"
+EXPECTED_HEAD = "20261112_0037"
 
 
 def _alembic_config() -> Config:
@@ -149,12 +149,23 @@ def test_contacts_drop_refuses_to_erase_rows(tmp_path: Path) -> None:
         con.execute("INSERT INTO users (id, telegram_user_id, first_name) VALUES (1, 1, 'A')")
         con.execute("INSERT INTO contacts (user_id, phone) VALUES (1, '+375291234567')")
     with pytest.raises(subprocess.CalledProcessError):
-        _run_alembic(path, ("upgrade", "head"))
+        _run_alembic(path, ("upgrade", "20261112_0036"))
     assert "contacts" in tables(), "a refused drop keeps the rows"
     with sqlite3.connect(path) as con:
         con.execute("DELETE FROM contacts")
-    _run_alembic(path, ("upgrade", "head"))
+    _run_alembic(path, ("upgrade", "20261112_0036"))
     assert "contacts" not in tables()
+
+
+def test_pro_trial_migration_keeps_existing_users_ineligible(tmp_path: Path) -> None:
+    path = tmp_path / "pro-trial.db"
+    with sqlite3.connect(path) as con:
+        con.execute("CREATE TABLE users (id INTEGER PRIMARY KEY)")
+        con.execute("INSERT INTO users (id) VALUES (1)")
+
+    _run_alembic(path, ("stamp", "20261112_0036"), ("upgrade", "20261112_0037"))
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT pro_trial_eligible FROM users").fetchone() == (0,)
 
 
 # ── Scheduler delivery-state revision on SQLite ─────────────────────────

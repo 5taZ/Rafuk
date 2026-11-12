@@ -6,13 +6,13 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import Settings
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import AccountStatus, Tracker, User
+from api.models import AccountStatus, Tracker, User, UserConsent
 from api.schemas import (
     AccountLimitRead,
     ProfileLimitsRead,
@@ -25,8 +25,11 @@ from api.schemas import (
 from api.services.account_erasure import ensure_user_creation_allowed
 from api.services.ai_quota import ai_quota_snapshot
 from api.services.cache import CacheBackend
+from api.services.consent_policy import CURRENT_POLICY_VERSION
 
 BARE_SEARCH_STATUS_CODE = "bare_search"
+PRO_STATUS_CODE = "scout"
+_PRO_TRIAL_DURATION = timedelta(days=3)
 LEGACY_STATUS_CODES = {"shark": "market_maker"}
 QUOTA_BUCKET_AI = "ai"
 QUOTA_BUCKET_ASSISTANT = "assistant"
@@ -218,6 +221,42 @@ async def get_effective_status(
     return await get_status_by_code(session, user.account_status_code)
 
 
+async def activate_pro_trial(
+    session: AsyncSession, user_id: int, *, now: datetime | None = None,
+) -> None:
+    granted_at = now or datetime.now(UTC)
+    terms_accepted = select(UserConsent.id).where(
+        UserConsent.user_id == user_id,
+        UserConsent.consent_type == "terms",
+        UserConsent.version == CURRENT_POLICY_VERSION,
+        UserConsent.revoked_at.is_(None),
+    ).exists()
+    pro_available = select(AccountStatus.code).where(
+        AccountStatus.code == PRO_STATUS_CODE,
+        AccountStatus.is_active.is_(True),
+    ).exists()
+    # A single update consumes eligibility together with the grant, even on concurrent retries.
+    await session.execute(
+        update(User)
+        .where(
+            User.id == user_id,
+            User.pro_trial_eligible.is_(True),
+            User.account_status_code == BARE_SEARCH_STATUS_CODE,
+            User.status_granted_at.is_(None),
+            terms_accepted,
+            pro_available,
+        )
+        .values(
+            pro_trial_eligible=False,
+            account_status_code=PRO_STATUS_CODE,
+            status_granted_at=granted_at,
+            status_expires_at=granted_at + _PRO_TRIAL_DURATION,
+            status_note="Пробный период Pro",
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+
 async def get_or_create_profile_user(
     session: AsyncSession,
     telegram_user: TelegramInitData,
@@ -279,6 +318,14 @@ async def build_profile(
     now: datetime | None = None,
 ) -> ProfileRead:
     user = await get_or_create_profile_user(session, telegram_user)
+    if (
+        telegram_user.channel_subscription_confirmed
+        and user.pro_trial_eligible
+        and user.account_status_code == BARE_SEARCH_STATUS_CODE
+        and user.status_granted_at is None
+    ):
+        await activate_pro_trial(session, user.id, now=now)
+        await session.refresh(user)
     status = await get_effective_status(session, user, now)
     granted_at, expires_at = effective_status_metadata(user, status)
     limits = await build_profile_limits(session, cache, user, status, now=now)

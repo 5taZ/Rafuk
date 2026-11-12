@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -155,18 +155,6 @@ async def _send_greeting(message: Message) -> None:
     await message.answer(text, reply_markup=keyboard)
 
 
-def legal_links(mini_app_url: str) -> str:
-    """LEGAL-01: the agreement and the policy, public before the first use."""
-    parts = urlsplit(mini_app_url)
-    if parts.scheme != "https" or not parts.netloc:
-        return ""
-    base = f"https://{parts.netloc}/legal"
-    return (
-        f"\n\nПользовательское соглашение: {base}/terms.html"
-        f"\nПолитика обработки персональных данных: {base}/privacy.html"
-    )
-
-
 def _greeting() -> tuple[str, InlineKeyboardMarkup | None]:
     url = get_settings().mini_app_url
     keyboard = mini_app_keyboard(url)
@@ -175,7 +163,7 @@ def _greeting() -> tuple[str, InlineKeyboardMarkup | None]:
         text += (
             "\nКнопка мини-аппа отключена локально — Telegram WebApp требует HTTPS."
         )
-    return text + legal_links(url), keyboard
+    return text, keyboard
 
 
 @subscription_router.callback_query(
