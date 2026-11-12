@@ -308,3 +308,25 @@ def test_blank_header_secret_is_unset(key: str, raw: str, expected: str | None) 
             assert secret is None
         else:
             assert secret.get_secret_value() == expected
+
+
+@pytest.mark.parametrize("channel", ["", "  ", "@", "https://t.me/"])
+def test_required_channel_cannot_be_turned_off_in_production(channel: str) -> None:
+    # CHAN-01: the channel subscription is the condition of using Rafuk.
+    env = {
+        "BOT_TOKEN": "test",
+        "DATABASE_URL": "sqlite+aiosqlite:///test.db",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "API_BASE_URL": "https://example.com",
+        "MINI_APP_URL": "https://example.com/app",
+        "ENV": "production",
+        "REQUIRED_CHANNEL": channel,
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from api import config
+
+        with pytest.raises(ValueError, match="REQUIRED_CHANNEL"):
+            config.Settings(_env_file=None)
+        env["REQUIRED_CHANNEL"] = "@RafuksToResell"
+        with patch.dict(os.environ, env, clear=True):
+            assert config.Settings(_env_file=None).required_channel == "@RafuksToResell"

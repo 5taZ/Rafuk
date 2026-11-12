@@ -29,6 +29,8 @@ def test_create_app_disables_schema_docs_in_production(monkeypatch) -> None:
         redis_url="redis://localhost:6379/0",
         api_base_url="https://example.com",
         mini_app_url="https://example.com/app",
+        # CHAN-01: production refuses an empty channel (conftest blanks it).
+        required_channel="@RafuksToResell",
         debug=False,
         auth_bypass=False,
         _env_file=None,

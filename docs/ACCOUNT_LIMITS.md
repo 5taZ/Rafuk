@@ -7,6 +7,20 @@
 | Max | 60 | 350 | 10 |
 | Ultra | 150 | 1000 | 10 |
 
+## Pro trial
+
+A new account gets Pro for 3 days once it has accepted the current user
+agreement and Telegram has confirmed its `REQUIRED_CHANNEL` subscription
+(an unanswered membership check grants nothing; admins never get it). The
+Mini App announces the trial once (`status.is_trial` in `/profile/me`).
+The trial is granted once per Telegram account: `pro_trial_claims` keeps an
+HMAC of the Telegram ID (key derived from `BOT_TOKEN`) that account erasure
+does not delete, so a deleted and re-created account gets no second trial.
+Accounts that existed before the trial never get it. Rotating `BOT_TOKEN`
+would make the recorded claims unrecognisable.
+
+## Defaults
+
 These are defaults. The admin status editor configures the two AI limits
 and tracker capacity separately for each active role. Free cannot enable AI.
 Both AI limits must be positive, or both zero; the weekly limit must be

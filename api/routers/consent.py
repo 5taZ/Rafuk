@@ -214,7 +214,7 @@ async def grant_consent(
         )
         if existing and existing.version == payload.version:
             if can_activate_trial:
-                await activate_pro_trial(session, uid)
+                await activate_pro_trial(session, uid, _user.user_id)
                 await session.commit()
             return ConsentStatusResponse(
                 consent_type=payload.consent_type,
@@ -240,7 +240,7 @@ async def grant_consent(
         try:
             if can_activate_trial:
                 await session.flush()
-                await activate_pro_trial(session, uid)
+                await activate_pro_trial(session, uid, _user.user_id)
             await session.commit()
         except IntegrityError:
             # DB-M6: the new UNIQUE partial index on

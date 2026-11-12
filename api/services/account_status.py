@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -7,12 +9,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import Settings
+from api.config import Settings, get_settings
 from api.middleware.telegram_auth import TelegramInitData
-from api.models import AccountStatus, Tracker, User, UserConsent
+from api.models import AccountStatus, ProTrialClaim, Tracker, User, UserConsent
 from api.schemas import (
     AccountLimitRead,
     ProfileLimitsRead,
@@ -30,6 +34,7 @@ from api.services.consent_policy import CURRENT_POLICY_VERSION
 BARE_SEARCH_STATUS_CODE = "bare_search"
 PRO_STATUS_CODE = "scout"
 _PRO_TRIAL_DURATION = timedelta(days=3)
+PRO_TRIAL_NOTE = "Пробный период Pro"
 LEGACY_STATUS_CODES = {"shark": "market_maker"}
 QUOTA_BUCKET_AI = "ai"
 QUOTA_BUCKET_ASSISTANT = "assistant"
@@ -221,10 +226,24 @@ async def get_effective_status(
     return await get_status_by_code(session, user.account_status_code)
 
 
+def pro_trial_marker(telegram_user_id: int, bot_token: str | None = None) -> str:
+    """TRIAL-01: the ``pro_trial_claims`` key — an HMAC, not the Telegram ID,
+    so the record kept after account erasure identifies no one by itself.
+    Migration 20261113_0038 computes the same value for its backfill."""
+    token = bot_token or get_settings().bot_token.get_secret_value()
+    key = hashlib.sha256(b"rafuk-pro-trial\0" + token.encode()).digest()
+    return hmac.new(key, str(int(telegram_user_id)).encode(), hashlib.sha256).hexdigest()
+
+
 async def activate_pro_trial(
-    session: AsyncSession, user_id: int, *, now: datetime | None = None,
-) -> None:
+    session: AsyncSession, user_id: int, telegram_user_id: int, *, now: datetime | None = None,
+) -> bool:
+    """Grant the one Pro trial of a Telegram account; True when granted now."""
     granted_at = now or datetime.now(UTC)
+    marker = pro_trial_marker(telegram_user_id)
+    already_claimed = select(ProTrialClaim.telegram_hash).where(
+        ProTrialClaim.telegram_hash == marker,
+    ).exists()
     terms_accepted = select(UserConsent.id).where(
         UserConsent.user_id == user_id,
         UserConsent.consent_type == "terms",
@@ -236,7 +255,7 @@ async def activate_pro_trial(
         AccountStatus.is_active.is_(True),
     ).exists()
     # A single update consumes eligibility together with the grant, even on concurrent retries.
-    await session.execute(
+    result = await session.execute(
         update(User)
         .where(
             User.id == user_id,
@@ -245,16 +264,28 @@ async def activate_pro_trial(
             User.status_granted_at.is_(None),
             terms_accepted,
             pro_available,
+            # TRIAL-01: an erased and re-created account is a new row.
+            ~already_claimed,
         )
         .values(
             pro_trial_eligible=False,
             account_status_code=PRO_STATUS_CODE,
             status_granted_at=granted_at,
             status_expires_at=granted_at + _PRO_TRIAL_DURATION,
-            status_note="Пробный период Pro",
+            status_note=PRO_TRIAL_NOTE,
         )
         .execution_options(synchronize_session=False)
     )
+    if not result.rowcount:
+        return False
+    dialect = session.get_bind().dialect.name
+    insert_factory = sqlite_insert if dialect == "sqlite" else pg_insert
+    await session.execute(
+        insert_factory(ProTrialClaim)
+        .values(telegram_hash=marker, claimed_at=granted_at)
+        .on_conflict_do_nothing(index_elements=["telegram_hash"])
+    )
+    return True
 
 
 async def get_or_create_profile_user(
@@ -324,7 +355,7 @@ async def build_profile(
         and user.account_status_code == BARE_SEARCH_STATUS_CODE
         and user.status_granted_at is None
     ):
-        await activate_pro_trial(session, user.id, now=now)
+        await activate_pro_trial(session, user.id, user.telegram_user_id, now=now)
         await session.refresh(user)
     status = await get_effective_status(session, user, now)
     granted_at, expires_at = effective_status_metadata(user, status)
@@ -338,6 +369,7 @@ async def build_profile(
             accent=status.accent,
             granted_at=granted_at,
             expires_at=expires_at,
+            is_trial=status.code == PRO_STATUS_CODE and user.status_note == PRO_TRIAL_NOTE,
         ),
         limits=limits,
         permissions=ProfilePermissionsRead(

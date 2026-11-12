@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261112_0037"
+EXPECTED_HEAD = "20261113_0038"
 
 
 def _alembic_config() -> Config:
@@ -166,6 +166,28 @@ def test_pro_trial_migration_keeps_existing_users_ineligible(tmp_path: Path) -> 
     _run_alembic(path, ("stamp", "20261112_0036"), ("upgrade", "20261112_0037"))
     with sqlite3.connect(path) as con:
         assert con.execute("SELECT pro_trial_eligible FROM users").fetchone() == (0,)
+
+
+def test_pro_trial_claims_backfill_marks_only_ineligible_accounts(tmp_path: Path) -> None:
+    # TRIAL-01: accounts from before the trial (and those that had it) can
+    # never start it after erasure; new accounts still waiting keep it.
+    from api.services.account_status import pro_trial_marker
+
+    path = tmp_path / "pro-trial-claims.db"
+    with sqlite3.connect(path) as con:
+        con.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, telegram_user_id BIGINT, "
+            "pro_trial_eligible BOOLEAN NOT NULL)"
+        )
+        con.execute("INSERT INTO users VALUES (1, 1001, 0), (2, 1002, 1)")
+    _run_alembic(path, ("stamp", "20261112_0037"), ("upgrade", "20261113_0038"))
+    with sqlite3.connect(path) as con:
+        hashes = {row[0] for row in con.execute("SELECT telegram_hash FROM pro_trial_claims")}
+    assert hashes == {pro_trial_marker(1001)}
+    _run_alembic(path, ("downgrade", "20261112_0037"))
+    with sqlite3.connect(path) as con:
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "pro_trial_claims" not in tables
 
 
 # ── Scheduler delivery-state revision on SQLite ─────────────────────────

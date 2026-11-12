@@ -803,6 +803,8 @@ class ProfileStatusRead(BaseModel):
     accent: str
     granted_at: datetime | None = None
     expires_at: datetime | None = None
+    # TRIAL-02: the status is the new-user Pro trial (the Mini App announces it).
+    is_trial: bool = False
 
 
 class ProfileLimitsRead(BaseModel):

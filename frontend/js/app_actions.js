@@ -265,7 +265,12 @@ function createAppActions(baseContext) {
             loadAdminAudit: async () => [],
         });
     const profileApi = profileApiFactory(context);
-    context.loadProfile = profileApi.loadProfile;
+    async function loadProfile(options) {
+        const profile = await profileApi.loadProfile(options);
+        maybeShowProTrialNotice(profile);
+        return profile;
+    }
+    context.loadProfile = loadProfile;
     const adminApi = adminApiFactory(context);
     Object.assign(context, {
         loadAdminUsers: adminApi.loadAdminUsers,
@@ -294,10 +299,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261112-v37"),
-                context._loadScript("js/api_ai_render.js?v=20261112-v37"),
-                context._loadScript("js/api_ai.js?v=20261112-v37"),
-                context._loadScript("js/api_listing_assistant.js?v=20261112-v37"),
+                context._loadScript("js/api_ai_modal.js?v=20261113-trial"),
+                context._loadScript("js/api_ai_render.js?v=20261113-trial"),
+                context._loadScript("js/api_ai.js?v=20261113-trial"),
+                context._loadScript("js/api_listing_assistant.js?v=20261113-trial"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -335,7 +340,7 @@ function createAppActions(baseContext) {
     Object.assign(context, {
         fetchProxyImageObjectUrl,
         clearProxyImageObjectUrls,
-        loadProfile: profileApi.loadProfile,
+        loadProfile,
         openOverview,
         openProfile,
         openAdmin,
@@ -1198,6 +1203,50 @@ function createAppActions(baseContext) {
         }, { capture: true, signal: ac.signal });
     }
 
+    const _TRIAL_NOTICE_KEY = "rafuk:proTrialNoticeShown";
+    let _trialNoticeShownFor = "";
+
+    /**
+     * TRIAL-02: tell a new user once that the three-day Pro trial is on.
+     * Remembered per device (and per page when storage is blocked).
+     */
+    function maybeShowProTrialNotice(profile) {
+        const status = profile?.status;
+        if (!status?.is_trial) return;
+        const marker = `${profile.user?.telegram_user_id || ""}:${status.granted_at || ""}`;
+        let seen = _trialNoticeShownFor;
+        try { seen = window.localStorage?.getItem(_TRIAL_NOTICE_KEY) || seen; } catch (_) {}
+        if (seen === marker) return;
+        const modal = document.getElementById("trial-modal");
+        const okBtn = document.getElementById("trial-modal-ok");
+        if (!modal || !okBtn || !modal.hidden) return;
+        _trialNoticeShownFor = marker;
+        try { window.localStorage?.setItem(_TRIAL_NOTICE_KEY, marker); } catch (_) {}
+        const expiry = document.getElementById("trial-modal-expiry");
+        const expiresAt = status.expires_at ? new Date(status.expires_at) : null;
+        if (expiry) {
+            expiry.textContent = expiresAt && !Number.isNaN(expiresAt.getTime())
+                ? `Pro действует до ${expiresAt.toLocaleString("ru-RU", {
+                    day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+                })}.`
+                : "";
+        }
+        openModalAnimated(modal);
+        _tgHaptic()?.notificationOccurred?.("success");
+        const ac = new AbortController();
+        const close = () => {
+            ac.abort();
+            closeModalAnimated(modal);
+        };
+        okBtn.addEventListener("click", close, { signal: ac.signal });
+        modal.addEventListener("click", (e) => { if (e.target === modal) close(); }, { signal: ac.signal });
+        document.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape") return;
+            e.stopPropagation();
+            close();
+        }, { capture: true, signal: ac.signal });
+    }
+
     async function deleteAccount() {
         // BE-M3: irreversible action — require the user to type their
         // Telegram first_name (the same one shown in the bot header) to
@@ -1427,7 +1476,7 @@ function createAppActions(baseContext) {
         exportLeads,
         exportLeadsCSV,
         exportLeadsXLSX,
-        loadProfile: profileApi.loadProfile,
+        loadProfile,
         openOverview,
         openProfile,
         openAdmin,

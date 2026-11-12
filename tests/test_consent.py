@@ -1041,6 +1041,53 @@ async def test_new_user_pro_trial_requires_terms_and_confirmed_membership(
         assert profile["status"]["code"] == "bare_search"
 
 
+async def test_pro_trial_is_once_per_telegram_account_even_after_erasure(
+    erasure_app, monkeypatch,
+):
+    # TRIAL-01: deleting the account and opening the Mini App again creates
+    # a new users row; it used to get a fresh three-day Pro every time.
+    from sqlalchemy import func, select
+
+    from api import dependencies
+    from api.models import ProTrialClaim
+    from api.services import channel_subscription
+
+    tg_id = 777009
+
+    async def member(bot_token, channel, user_id):
+        return True
+
+    monkeypatch.setattr(erasure_app.state.settings, "required_channel", "TrialChannel")
+    monkeypatch.setattr(dependencies, "get_settings", lambda: erasure_app.state.settings)
+    monkeypatch.setattr(channel_subscription, "fetch_channel_membership", member)
+    terms = {"consent_type": "terms", "version": "2026.3"}
+    session_factory = erasure_app.state.session_factory
+
+    async with _erasure_client(erasure_app) as client:
+        first = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=int(time.time()) - 60)}
+        assert (await client.post("/api/v1/account/consent", json=terms, headers=first)
+                ).status_code == 201
+        status = (await client.get("/api/v1/profile/me", headers=first)).json()["status"]
+        assert (status["code"], status["is_trial"]) == ("scout", True)
+        resp = await client.request(
+            "DELETE", "/api/v1/account", json={"confirmation": "Erased"}, headers=first,
+        )
+        assert resp.status_code == 204
+        await _drain_provision_tasks()
+
+        # Newer than the deletion tombstone (5 s skew), inside the 60 s future skew.
+        later = int(time.time()) + 30
+        reopened = {"X-Telegram-Init-Data": _signed_init_data(tg_id, auth_date=later)}
+        assert (await client.post("/api/v1/account/consent", json=terms, headers=reopened)
+                ).status_code == 201
+        status = (await client.get("/api/v1/profile/me", headers=reopened)).json()["status"]
+        assert (status["code"], status["is_trial"]) == ("bare_search", False)
+
+    async with session_factory() as session:
+        claims = await session.scalar(select(func.count()).select_from(ProTrialClaim))
+    assert claims == 1
+
+
 async def _seed_erasure_user(session_factory, telegram_user_id: int) -> None:
     from api.models import User
 

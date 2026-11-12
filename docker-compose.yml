@@ -30,9 +30,11 @@ x-app-env: &app-env
   REDIS_URL: *redis-url
   API_BASE_URL: ${API_BASE_URL}
   MINI_APP_URL: ${MINI_APP_URL}
-  # Channel the bot and the Mini App API require a subscription to; set it
-  # empty to open Rafuk to everyone. The bot must be the channel's admin.
-  REQUIRED_CHANNEL: ${REQUIRED_CHANNEL-@RafuksToResell}
+  # CHAN-01: channel the bot and the Mini App API require a subscription to
+  # (also a condition of the Pro trial). An empty value falls back to the
+  # default; the api refuses an empty one under ENV=production. The bot must
+  # be the channel's admin.
+  REQUIRED_CHANNEL: ${REQUIRED_CHANNEL:-@RafuksToResell}
   # LEGAL-01/05: operator shown on /legal/*.html; idle-account retention.
   OPERATOR_NAME: ${OPERATOR_NAME:-}
   OPERATOR_ADDRESS: ${OPERATOR_ADDRESS:-}

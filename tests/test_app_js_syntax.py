@@ -4923,6 +4923,67 @@ const accept = document.getElementById("terms-accept-btn");
     _node_ok(harness)
 
 
+def test_trial02_pro_trial_notice_shows_once_per_trial() -> None:
+    """TRIAL-02: a profile on the new-user Pro trial opens the notice once;
+    later profile loads of the same trial, and other statuses, open nothing."""
+    harness = _FAKE_DOM_JS + _js("dom_helpers.js") + _ACTIONS_STUBS + r"""
+let profile = null;
+function createApiProfile() {
+    return { loadProfile: async () => profile };
+}
+function createApiCore() {
+    return {
+        telegramHeaders: () => ({}), requestJson: noop, getJson: async () => ({}),
+        postJson: noop, deleteJson: noop, buildCommonQuery: noop,
+    };
+}
+""" + _js("app_actions.js") + r"""
+const assert = require("assert");
+const app = el("div", { id: "app-root" });
+const modal = el("div", { id: "trial-modal", class: "modal-overlay", hidden: true },
+    el("div", { class: "modal-content", role: "dialog" },
+        el("p", { id: "trial-modal-expiry" }),
+        el("button", { id: "trial-modal-ok" }, "Отлично")));
+app.append(el("main", {}, el("button", {}, "Search")), modal);
+document.body.append(app);
+const actions = createAppActions({
+    state: { search: { recentSearches: [] }, misc: {}, ui: {}, profile: {} },
+    elements: { views: {} },
+    markDirty: noop,
+    renderAll: noop,
+    showToast: noop,
+    trapFocus,
+});
+const ok = document.getElementById("trial-modal-ok");
+const trial = {
+    user: { telegram_user_id: 42 },
+    status: { code: "scout", is_trial: true, granted_at: "2026-11-13T10:00:00Z",
+              expires_at: "2026-11-16T10:00:00Z" },
+};
+
+(async () => {
+    profile = { user: { telegram_user_id: 42 }, status: { code: "bare_search", is_trial: false } };
+    await actions.loadProfile();
+    assert.strictEqual(modal.hidden, true, "no trial, no notice");
+
+    profile = trial;
+    assert.strictEqual(await actions.loadProfile(), trial, "the profile is passed through");
+    await tick(5);
+    assert.strictEqual(modal.hidden, false, "the trial notice opens");
+    assert.match(document.getElementById("trial-modal-expiry").textContent, /^Pro действует до /);
+    ok.click();
+    await tick(40);
+    assert.strictEqual(modal.hidden, true, "the button closes it");
+
+    await actions.loadProfile();
+    await tick(5);
+    assert.strictEqual(modal.hidden, true, "the same trial is announced once");
+    assert.strictEqual(
+        localStorage.getItem("rafuk:proTrialNoticeShown"), "42:2026-11-13T10:00:00Z");
+})()""" + _NODE_FAIL
+    _node_ok(harness)
+
+
 def _css_rule_values(css: str, selector: str, prop: str) -> list[str]:
     values = []
     for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):

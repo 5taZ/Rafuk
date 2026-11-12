@@ -1027,6 +1027,26 @@ class UserConsent(Base):
     )
 
 
+class ProTrialClaim(Base):
+    """TRIAL-01: Telegram accounts that may no longer start the Pro trial.
+
+    Keyed by an HMAC of the Telegram ID (``pro_trial_marker``), not the ID,
+    and deliberately outside account erasure: deleting the account and
+    opening the Mini App again creates a new ``users`` row, which must not
+    reopen the one trial per Telegram account. Accounts that existed before
+    the trial was introduced are recorded too (migration 20261113_0038).
+    """
+
+    __tablename__ = "pro_trial_claims"
+
+    telegram_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class AIAuditLog(Base):
     """Audit trail for AI-assisted decisions (Belarus Law No. 99-З requirement)."""
 

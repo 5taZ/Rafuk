@@ -246,7 +246,8 @@ class Settings(BaseSettings):
     audit_hash_secret: SecretStr | None = Field(default=None, alias="AUDIT_HASH_SECRET")
     admin_telegram_user_ids: str = ""
     # Rafuk opens only to subscribers of this channel (bot /start and the
-    # Mini App API); empty turns the gate off. The bot must be its admin.
+    # Mini App API) and the Pro trial needs it confirmed. The bot must be its
+    # admin. Empty turns the gate off — refused when ENV=production.
     required_channel: str = "@RafuksToResell"
     # LEGAL-01: Law 99-З requires the operator's name and address before
     # consent; the public terms/privacy pages read them from here.
@@ -265,6 +266,20 @@ class Settings(BaseSettings):
     image_proxy_max_bytes: int = 5 * 1024 * 1024
     metrics_bearer_token: SecretStr | None = None
     api_max_body_bytes: int = 8 * 1024 * 1024
+
+    @field_validator("required_channel")
+    @classmethod
+    def _require_channel_in_production(cls, v: str, info) -> str:
+        # CHAN-01: the channel subscription is the condition of using Rafuk
+        # (and of the Pro trial); production must never run with it off.
+        # Same normalisation as channel_subscription.required_channel().
+        name = v.strip()
+        for prefix in ("https://t.me/", "http://t.me/", "t.me/", "@"):
+            if name.lower().startswith(prefix):
+                name = name[len(prefix):]
+        if info.data.get("env") == "production" and not name.strip("/"):
+            raise ValueError("REQUIRED_CHANNEL must be set when ENV=production.")
+        return v
 
     @field_validator("redis_url")
     @classmethod
