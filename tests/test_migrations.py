@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "migrations" / "alembic.ini"
 # Bump together with docs/BACKUP_RUNBOOK.md ("Expected Alembic head").
-EXPECTED_HEAD = "20261113_0038"
+EXPECTED_HEAD = "20261113_0039"
 
 
 def _alembic_config() -> Config:

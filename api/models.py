@@ -978,8 +978,8 @@ class UserConsent(Base):
     version: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
-        default="2026.3",
-        server_default="2026.3",
+        default="2026.4",
+        server_default="2026.4",
     )
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     granted_at: Mapped[datetime] = mapped_column(
@@ -994,7 +994,7 @@ class UserConsent(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "version IN ('2026.1', '2026.2', '2026.3')",
+            "version IN ('2026.1', '2026.2', '2026.3', '2026.4')",
             name="chk_user_consents_version_known",
         ),
         Index("idx_user_consents_user", "user_id"),

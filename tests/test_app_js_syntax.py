@@ -4849,9 +4849,9 @@ function createApiCore() {
         telegramHeaders: () => ({}),
         requestJson: noop,
         getJson: async (url) => {
-            if (url.endsWith("/legal/operator")) return { policy_version: "2026.3" };
+            if (url.endsWith("/legal/operator")) return { policy_version: "2026.4" };
             if (url.endsWith("/consent/terms")) {
-                return { granted, version: granted ? "2026.3" : null };
+                return { granted, version: granted ? "2026.4" : null };
             }
             return {};
         },
@@ -4909,12 +4909,12 @@ const accept = document.getElementById("terms-accept-btn");
     accept.click();
     await pending;
     assert.deepStrictEqual(posts, [
-        ["/api/v1/account/consent", { consent_type: "terms", version: "2026.3" }],
+        ["/api/v1/account/consent", { consent_type: "terms", version: "2026.4" }],
     ]);
     assert.strictEqual(gate.hidden, true);
     assert.ok(!main.hasAttribute("inert"));
     assert.strictEqual(actions.termsAcceptedLocally(), true);
-    assert.strictEqual(localStorage.getItem("rafuk:termsAcceptedVersion"), "2026.3");
+    assert.strictEqual(localStorage.getItem("rafuk:termsAcceptedVersion"), "2026.4");
 
     await actions.ensureTermsAccepted();
     assert.strictEqual(gate.hidden, true, "an accepted agreement opens no gate");

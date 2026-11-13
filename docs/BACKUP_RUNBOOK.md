@@ -75,7 +75,7 @@ DATABASE_URL='postgresql+asyncpg://restore_user:restore_password@restore_host:54
 uv run alembic -c migrations/alembic.ini current
 ```
 
-Expected Alembic head: `20261113_0038`.
+Expected Alembic head: `20261113_0039`.
 
 ## Close-out criteria for REST-OPS-01
 

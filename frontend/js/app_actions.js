@@ -299,10 +299,10 @@ function createAppActions(baseContext) {
             // by the time createApiAi calls them. They're loaded in
             // parallel and share the same cache-busting version stamp.
             await Promise.all([
-                context._loadScript("js/api_ai_modal.js?v=20261113-trial"),
-                context._loadScript("js/api_ai_render.js?v=20261113-trial"),
-                context._loadScript("js/api_ai.js?v=20261113-trial"),
-                context._loadScript("js/api_listing_assistant.js?v=20261113-trial"),
+                context._loadScript("js/api_ai_modal.js?v=20261113-legal16"),
+                context._loadScript("js/api_ai_render.js?v=20261113-legal16"),
+                context._loadScript("js/api_ai.js?v=20261113-legal16"),
+                context._loadScript("js/api_listing_assistant.js?v=20261113-legal16"),
             ]);
             const app = window.App || {};
             if (typeof app.createApiAi !== "function") {
@@ -918,7 +918,7 @@ function createAppActions(baseContext) {
         if (providerLabel) {
             providerLabel.textContent = aiConsentInfo?.display_label || "провайдер AI настроен на сервере";
         }
-        const consentVersion = aiConsentInfo?.policy_version || "2026.3";
+        const consentVersion = aiConsentInfo?.policy_version || "2026.4";
 
         // Reset checkboxes
         aiCb.checked = false;
@@ -1141,7 +1141,7 @@ function createAppActions(baseContext) {
             _rememberAcceptedTerms(status.version || "");
             return;
         }
-        let version = "2026.3";
+        let version = "2026.4";
         try {
             const info = await core.getJson("/api/v1/legal/operator");
             if (info) {
