@@ -178,7 +178,7 @@ list of importers so removing them is a deliberate decision.
 | INF-C2 | HTTPS/TLS | Cloudflared already proxies, deeper TLS is deployment-side |
 | INF-C3 | `pkill -f` in scripts | Local dev scripts only |
 | SEC-H2 | Docker Secrets | Needs Compose Spec migration + secret-store decision |
-| INF-H1 | `pg_dump` cron | Needs off-host backup target |
+| INF-H1 | `pg_dump` cron | Done: daily VPS dump + copy to the deploying PC (`docs/VPS.md`) |
 | INF-H2 | Monitoring | Needs Prometheus / UptimeRobot decision |
 | INF-H3 | Push image to registry | Needs CD pipeline first |
 | INF-H4 | `deploy.yml` | CD pipeline — needs deployment target |

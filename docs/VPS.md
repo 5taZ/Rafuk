@@ -11,6 +11,8 @@ host status
 host deploy
 host restart
 host stop
+host backup
+host backup-sync
 ```
 
 `stop-host.cmd` also stops Rafuk. Stopping preserves PostgreSQL data.
@@ -59,6 +61,8 @@ server password is not stored in the launchers.
 | `/opt/rafuk/shared/.env` | Private production settings |
 | `/opt/rafuk/shared/compose.vps.yml` | VPS image and memory overrides |
 | `/opt/rafuk/backups/` | Database snapshot taken during migration |
+| `/opt/rafuk/backups/daily/` | Daily database dumps, kept 30 days |
+| `/usr/local/sbin/rafuk-backup` | Database dump command (`scripts/vps/rafuk-backup.sh`) |
 | `/usr/local/sbin/rafuk-vps` | Server control command |
 | `/etc/nginx/sites-enabled/rafuk-*` | Public HTTP/HTTPS ingress |
 | `/etc/letsencrypt/live/rafuk-ip/` | Public IP certificate |
@@ -77,6 +81,32 @@ systemctl list-timers rafuk-cert-renew.timer
 systemctl start rafuk-cert-renew.service
 journalctl -u rafuk-cert-renew.service --no-pager -n 30
 ```
+
+## Database backups
+
+`rafuk-backup.timer` dumps the database every day at 01:30 UTC into
+`/opt/rafuk/backups/daily/rafuk-YYYYMMDD-HHMMSS.dump` (`pg_dump -Fc`,
+checked with `pg_restore --list` before it replaces anything) and deletes
+dumps older than 30 days. A dump of the current database is about 0.2 MB.
+
+`host backup` makes a fresh dump now and copies every dump the PC does
+not have yet; `host backup-sync` only copies. Copies go to
+`%USERPROFILE%\RafukBackups` (or `backup_dir` in `.run/rafuk-vps.json`),
+outside the repository, and are kept for 30 days. On the PC that holds the
+VPS key, the scheduled task "Rafuk backup sync" runs `backup-sync` daily
+and catches up after the PC was off. Another developer's deploys do not
+touch the timer or the dumps; a PC without the VPS key has no copy.
+
+Install or update the server side after a deploy that changed these files:
+
+```bash
+install -m 0755 /opt/rafuk/current/scripts/vps/rafuk-backup.sh /usr/local/sbin/rafuk-backup
+install -m 0755 /opt/rafuk/current/scripts/vps/rafuk-vps /usr/local/sbin/rafuk-vps
+install -m 0644 /opt/rafuk/current/scripts/vps/rafuk-backup.service /opt/rafuk/current/scripts/vps/rafuk-backup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now rafuk-backup.timer
+```
+
+Restore follows `docs/BACKUP_RUNBOOK.md` (`pg_restore` into a stopped stack).
 
 Local `Start-Rafuk.cmd` and `Stop-Rafuk.cmd` control the Windows Docker
 stack. Keep its bot and scheduler stopped while the VPS runs the same

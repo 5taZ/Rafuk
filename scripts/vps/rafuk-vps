@@ -30,5 +30,10 @@ case "${1:-status}" in
         if systemctl is-active --quiet rafuk.service; then check_https; fi
         ;;
     logs) "${compose[@]}" logs --tail 60 --no-color api bot scheduler frontend ;;
-    *) printf 'Usage: rafuk-vps {start|stop|restart|status|logs}\n' >&2; exit 2 ;;
+    backup)
+        systemctl start rafuk-backup.service
+        find /opt/rafuk/backups/daily -maxdepth 1 -type f -name 'rafuk-*.dump' -printf '%f %s\n' | sort | tail -1
+        ;;
+    backups) find /opt/rafuk/backups/daily -maxdepth 1 -type f -name 'rafuk-*.dump' -printf '%f\n' | sort ;;
+    *) printf 'Usage: rafuk-vps {start|stop|restart|status|logs|backup|backups}\n' >&2; exit 2 ;;
 esac

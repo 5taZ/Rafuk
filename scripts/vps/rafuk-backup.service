@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the Rafuk PostgreSQL database
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rafuk-backup
+TimeoutStartSec=600
